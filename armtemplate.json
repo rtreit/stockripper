@@ -1,0 +1,44 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "acrName": {
+            "type": "string",
+            "defaultValue": "stockrippercr",
+            "metadata": {
+                "description": "Name of the Azure Container Registry"
+            }
+        },
+        "location": {
+            "type": "string",
+            "defaultValue": "westus2",
+            "metadata": {
+                "description": "Location for the resources"
+            }
+        },
+        "sku": {
+            "type": "string",
+            "defaultValue": "Basic",
+            "allowedValues": [
+                "Basic",
+                "Standard",
+                "Premium"
+            ],
+            "metadata": {
+                "description": "SKU for the Azure Container Registry"
+            }
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ContainerRegistry/registries",
+            "apiVersion": "2019-05-01",
+            "name": "stockrippercr",
+            "location": "westus2",
+            "sku": {
+                "name": "Basic"
+            },
+            "properties": {}
+        }
+    ]
+}
