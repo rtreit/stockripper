@@ -1,0 +1,35 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "searchServiceName": {
+            "type": "string"
+        },
+        "location": {
+            "type": "string"
+        },
+        "sku": {
+            "type": "string",
+            "defaultValue": "free",
+            "allowedValues": [
+                "free", "basic", "standard", "standard2", "standard3",
+                "storage_optimized_l1", "storage_optimized_l2"
+            ]
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Search/searchServices",
+            "apiVersion": "2020-08-01",
+            "name": "[parameters('searchServiceName')]",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "[parameters('sku')]"
+            },
+            "properties": {
+                "replicaCount": 1,
+                "partitionCount": 1
+            }
+        }
+    ]
+}

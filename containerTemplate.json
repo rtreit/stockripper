@@ -1,0 +1,60 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "containerName": {
+            "type": "string"
+        },
+        "acrName": {
+            "type": "string"
+        },
+        "imageName": {
+            "type": "string"
+        },
+        "location": {
+            "type": "string"
+        },
+        "environmentVariables": {
+            "type": "array"
+        },
+        "acrUsername": {
+            "type": "string"
+        },
+        "acrPassword": {
+            "type": "securestring"
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ContainerInstance/containerGroups",
+            "apiVersion": "2019-12-01",
+            "name": "[parameters('containerName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "containers": [
+                    {
+                        "name": "[parameters('containerName')]",
+                        "properties": {
+                            "image": "[parameters('imageName')]",
+                            "resources": {
+                                "requests": {
+                                    "cpu": 1,
+                                    "memoryInGb": 1
+                                }
+                            },
+                            "environmentVariables": "[parameters('environmentVariables')]"
+                        }
+                    }
+                ],
+                "osType": "Linux",
+                "imageRegistryCredentials": [
+                    {
+                        "server": "[concat(parameters('acrName'), '.azurecr.io')]",
+                        "username": "[parameters('acrUsername')]",
+                        "password": "[parameters('acrPassword')]"
+                    }
+                ]
+            }
+        }
+    ]
+}
