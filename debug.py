@@ -1,5 +1,6 @@
 import os
 import time
+
 print("Starting the debug.py script...")
 while True:
     # Get the current time
