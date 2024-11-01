@@ -1,5 +1,3 @@
-# delete-azure-resources.ps1
-
 $resourceGroupName = "stockripper"
 $resourceIds = az resource list --resource-group $resourceGroupName --query "[].id" --output tsv
 
