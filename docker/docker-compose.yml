@@ -1,17 +1,18 @@
 version: '3.8'
 
 services:
-  python-app:
-    build:
-      context: .
-      dockerfile: Dockerfile  
-    image: "${ACR_NAME}.azurecr.io/stockripper-python:latest"
+  fsharp-app:
+    image: stockrippercr.azurecr.io/stockripper-fsharp-app:latest
     env_file:
       - .env
     environment:
-      SEARCH_ADMIN_KEY: ${SEARCH_ADMIN_KEY}  
+    deploy:
+      replicas: 1
 
-  fsharp-app:
-    image: "${ACR_NAME}.azurecr.io/stockripper-fsharp:latest"
-    ports:
-      - "8081:80"  
+  python-app:
+    image: stockrippercr.azurecr.io/stockripper-agent-app:latest
+    env_file:
+      - .env
+    environment:
+    deploy:
+      replicas: 1

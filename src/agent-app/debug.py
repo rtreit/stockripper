@@ -2,18 +2,11 @@ import os
 import time
 
 print ("Hello from Python")
-#while True:
-    # Get the current time
-    #current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-    # Get the environment variables
-    #env_vars = os.environ
-
-    # Print the current time
-    #print(f"Current Time: {current_time}")
-
-    # Print the environment variables
-    #print("Environment Variables:")
-    #for key, value in env_vars.items():
-    #    print(f"{key}: {value}")
-    # Wait for 10 seconds
+while True:
+    current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    env_vars = os.environ
+    print(f"Current Time: {current_time}")
+    print("Environment Variables:")
+    for key, value in env_vars.items():
+        print(f"{key}: {value}")
+    time.sleep(60)
