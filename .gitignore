@@ -159,7 +159,84 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# .NET build directories
+bin/
+obj/
+
+# Rider, Visual Studio, and VSCode settings
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Mono Auto Generated Files
+mono_crash.*
+
+# Visual Studio for Mac
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/*.cache
+.vscode/**/*.cache
+.vscode/*.log
+.vscode/*.tlog
+.vscode/*.idx
+.vscode/.DS_Store
+.vscode/*.pidb
+
+# Package directories
+**/packages/
+**/node_modules/
+
+# Paket dependencies
+.paket/
+paket-files/
+
+# Dotnet tools
+.tool_versions
+.dotnet_tool.json
+
+# Build artifacts
+*.dll
+*.exe
+*.app
+*.dylib
+*.so
+*.pdb
+*.nuspec
+*.nupkg
+
+# Publish artifacts
+.publish/
+
+# Logs
+*.log
+*.trace
+*.swp
+
+# Cache directories
+.nuget/
+.npm/
+
+# VSCode Debug Files
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.old
+*.swp
+*.swo
+*.err
+
 .env
 parameters.json
 containerParameters.json
 setEnv.ps1
+
