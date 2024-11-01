@@ -48,6 +48,8 @@ az deployment group create --resource-group $resourceGroupName --template-file "
 # Get the admin key
 $SEARCH_ADMIN_KEY = az search admin-key show --service-name $searchServiceName --resource-group $resourceGroupName --query "primaryKey" -o tsv
 
+# Read and clean .env file content
+Write-Output "Reading and cleaning environment variables from $envFilePath..."
 $envContent = Get-Content $envFilePath
 
 # Remove any existing SEARCH_ADMIN_KEY lines
@@ -56,36 +58,30 @@ $cleanedEnvContent = $envContent | Where-Object { $_ -notmatch "^SEARCH_ADMIN_KE
 # Write the cleaned and updated content back to the .env file
 Set-Content -Path $envFilePath -Value $cleanedEnvContent
 
-# Add the endpoint and key to the .env file
+# Add the SEARCH_ADMIN_KEY to the .env file
 Write-Host "Adding the search service admin key to the .env file..."
 Add-Content -Path $envFilePath -Value "SEARCH_ADMIN_KEY=$SEARCH_ADMIN_KEY"
 
-# Clean .env file again to remove any potential duplicates or blank lines
+# Clean .env file again to remove any duplicates or blank lines
 $envVars = Get-Content $envFilePath | Where-Object { $_.Trim() -ne "" } | Sort-Object -Unique
-Set-Content -Path $envFilePath -Value $envVars
 
-Write-Host "Successfully updated .env file with SEARCH_ADMIN_KEY and cleaned up."
-
-
-# Read and clean .env file
-Write-Output "Reading and cleaning environment variables from $envFilePath..."
-$envVars = Get-Content $envFilePath | Where-Object { $_.Trim() -ne "" } | Sort-Object -Unique | ForEach-Object {
+# Convert cleaned environment variables into an array of objects
+$envVarsArray = $envVars | ForEach-Object {
     $key, $value = $_ -split '='
     [PSCustomObject]@{ name = $key.Trim(); value = $value.Trim() }
 }
 
-# Print cleaned environment variables for debugging
-Write-Output "Cleaned environment variables:"
-$envVars | Format-Table -AutoSize
+# Convert environment variables to JSON array format
+$envVarsJsonArray = $envVarsArray | ConvertTo-Json -Compress -Depth 10
 
-# Deploy Container Instance
+# Prepare parameters for Container Instance deployment
 Write-Output "Deploying Container Instance..."
 $parameters = @{
     containerName = @{ "value" = $containerName }
     acrName = @{ "value" = $acrName }
     imageName = @{ "value" = "$acrName.azurecr.io/$imageName" }
     location = @{ "value" = $location }
-    environmentVariables = @{ "value" = $envVars }
+    environmentVariables = @{ "value" = $envVarsArray }
     acrUsername = @{ "value" = $acrUsername }
     acrPassword = @{ "value" = $acrPassword }
 }
@@ -95,6 +91,7 @@ $parametersFilePath = ".\containerParameters.json"
 $parametersJson | Out-File -FilePath $parametersFilePath -Encoding ascii
 
 az deployment group create --resource-group $resourceGroupName --template-file ".\containerTemplate.json" --parameters @$parametersFilePath
+
 
 # clean up
 Remove-Item $parametersFilePath
