@@ -3,16 +3,10 @@ version: '3.8'
 services:
   fsharp-app:
     image: stockrippercr.azurecr.io/stockripper-fsharp-app:latest
-    env_file:
-      - .env
-    environment:
     deploy:
       replicas: 1
 
   python-app:
     image: stockrippercr.azurecr.io/stockripper-agent-app:latest
-    env_file:
-      - .env
-    environment:
     deploy:
       replicas: 1
