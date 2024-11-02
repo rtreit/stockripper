@@ -6,6 +6,7 @@ $containerGroupPython = "stockripper-python-app"
 $vnetName = "stockripperVNet"
 $subnetName = "stockripperSubnet"
 $subnetId = az network vnet subnet show --resource-group $resourceGroupName --vnet-name $vnetName --name $subnetName --query "id" -o tsv
+$dnsZoneName = "stockripper.internal"
 
 az acr login --name $acrName
 
@@ -67,6 +68,5 @@ remove-item $pythonParametersFilePath
 $fsharpIp = az container show --name $containerGroupFSharp --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 $pythonIp = az container show --name $containerGroupPython --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 
-$dnsZoneName = "stockripper.local"
 az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "fsharp" --ipv4-address $fsharpIp
 az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "python" --ipv4-address $pythonIp

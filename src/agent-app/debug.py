@@ -1,12 +1,11 @@
-import os
-import time
+# health_check.py
+from flask import Flask, jsonify
 
-print ("Hello from Python")
-while True:
-    current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    env_vars = os.environ
-    print(f"Current Time: {current_time}")
-    print("Environment Variables:")
-    for key, value in env_vars.items():
-        print(f"{key}: {value}")
-    time.sleep(60)
+app = Flask(__name__)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify(status="I'm alive"), 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)  # Expose on all interfaces on port 5000
