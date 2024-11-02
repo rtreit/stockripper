@@ -68,8 +68,6 @@ remove-item $pythonParametersFilePath
 $fsharpIp = az container show --name $containerGroupFSharp --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 $pythonIp = az container show --name $containerGroupPython --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 
-az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "fsharp" --ipv4-address $fsharpIp
-az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "python" --ipv4-address $pythonIp
 az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "stockripper-fsharp-app" --ipv4-address $fsharpIp
 az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "stockripper-python-app" --ipv4-address $pythonIp
 
