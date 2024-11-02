@@ -22,6 +22,9 @@ foreach ($container in $containers) {
     }
 }
 
-# Run containers with network aliases to simulate Azure setup
-Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-agent-app -p 5000:5000 --network stockripper-network --network-alias stockripper-python-app.stockripper.internal stockripper-agent-app:latest"
-Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-fsharp-app -p 5001:5001 --network stockripper-network --network-alias stockripper-fsharp-app.stockripper.internal stockripper-fsharp-app:latest"
+$envFilePath = "..\config\.env" # Adjust the path to your .env file
+
+# Run containers with network aliases and environment variables from the .env file
+Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-agent-app -p 5000:5000 --network stockripper-network --network-alias stockripper-python-app.stockripper.internal --env-file $envFilePath stockripper-agent-app:latest"
+Start-Sleep -Seconds 2
+Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-fsharp-app -p 5001:5001 --network stockripper-network --network-alias stockripper-fsharp-app.stockripper.internal --env-file $envFilePath stockripper-fsharp-app:latest"

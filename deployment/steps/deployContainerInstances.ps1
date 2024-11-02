@@ -68,6 +68,30 @@ remove-item $pythonParametersFilePath
 $fsharpIp = az container show --name $containerGroupFSharp --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 $pythonIp = az container show --name $containerGroupPython --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 
-az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "stockripper-fsharp-app" --ipv4-address $fsharpIp
-az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "stockripper-python-app" --ipv4-address $pythonIp
+# Function to check if a DNS record exists and add it if it doesn't
+function Add-DnsRecordIfNotExists($resourceGroupName, $dnsZoneName, $recordSetName, $ipAddress) {
+    # Get the existing A records for the record set
+    $existingRecords = az network private-dns record-set a show `
+        --resource-group $resourceGroupName `
+        --zone-name $dnsZoneName `
+        --name $recordSetName `
+        --query "arecords[].ipv4Address" -o tsv
 
+    # Check if the IP address already exists in the record set
+    if ($existingRecords -contains $ipAddress) {
+        Write-Output "DNS record for $recordSetName with IP $ipAddress already exists. Skipping."
+    }
+    else {
+        Write-Output "Adding DNS record for $recordSetName with IP $ipAddress"
+        az network private-dns record-set a add-record `
+            --resource-group $resourceGroupName `
+            --zone-name $dnsZoneName `
+            --record-set-name $recordSetName `
+            --ipv4-address $ipAddress
+    }
+}
+
+
+# Check and add DNS records if they don't already exist
+Add-DnsRecordIfNotExists -resourceGroupName $resourceGroupName -dnsZoneName $dnsZoneName -recordSetName "stockripper-fsharp-app" -ipAddress $fsharpIp
+Add-DnsRecordIfNotExists -resourceGroupName $resourceGroupName -dnsZoneName $dnsZoneName -recordSetName "stockripper-python-app" -ipAddress $pythonIp
