@@ -1,6 +1,6 @@
 $resourceGroupName = "stockripper"
 $searchServiceName = "stockrippersearch"
-$location = "westus2"
+$location = if ($env:AZURE_LOCATION) { $env:AZURE_LOCATION } else { az group list --query "[0].location" --output tsv }
 $envFilePath = "..\config\.env"
 
 Write-Output "Deploying Cognitive Search service..."
