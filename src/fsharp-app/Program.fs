@@ -1,28 +1,22 @@
-﻿open System
-open System.Net.Http
-open System.Threading.Tasks
+namespace StockRipperFS
+open Microsoft.AspNetCore.Builder
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Hosting
 
-let httpClient = new HttpClient()
+module Program =
+    let exitCode = 0
 
-let getHealthCheckAsync() =
-    task {
-        let url = "http://stockripper-python-app.stockripper.internal:5000/health"
-        printfn "Sending request to Python container at %s" url
-        try
-            let! response = httpClient.GetAsync(url)
-            if response.IsSuccessStatusCode then
-                let! content = response.Content.ReadAsStringAsync()
-                printfn "Response from Python container: %s" content
-            else
-                printfn "Failed to reach Python container. Status code: %d" (int response.StatusCode)
-        with
-        | ex -> printfn "Error calling Python container: %s" ex.Message
-    }
+    [<EntryPoint>]
+    let main args =
 
-[<EntryPoint>]
-let main argv =
-    printfn "Hello from F#"
+        let builder = WebApplication.CreateBuilder(args)
+        builder.Services.AddControllers() |> ignore
 
-    // Call the health check endpoint and print results
-    getHealthCheckAsync().Wait()
-    0 // return an integer exit code
+        let app = builder.Build()
+        app.UseHttpsRedirection() |> ignore
+        app.UseAuthorization() |> ignore
+        app.MapControllers() |> ignore
+
+        app.Run()
+
+        exitCode
