@@ -27,15 +27,16 @@ type HealthController (logger : ILogger<HealthController>) =
         }
 
     [<HttpGet>]
-    member _.Get() =
+    member _.Get() : Async<ActionResult> =
         let context = base.HttpContext
-        let query = context.Request.Query
         async {
-            if query.ContainsKey("pingAgent") then
+            match context.Request.Query with
+            | query when query.ContainsKey("pingAgent") ->
                 let! response = PingAgentAsync
                 return OkObjectResult({ Status = $"Healthy - response from pinging agent service: '{response}'" })
-            else
+            | query when query.ContainsKey("simulateError") ->
+                return BadRequestResult()
+            | _ ->
                 return OkObjectResult({ Status = "Healthy" })
         }
-
 
