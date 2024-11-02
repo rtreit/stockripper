@@ -5,7 +5,9 @@ open Microsoft.Extensions.Logging
 open System.Net.Http
 open System.Net.Http.Json
 open StockRipperFS
-
+open System
+open Microsoft.AspNetCore.Mvc
+open Microsoft.AspNetCore.Routing
 type HealthCheckResponse = { Status: string }
 
 [<ApiController>]
@@ -28,9 +30,12 @@ type HealthController (logger : ILogger<HealthController>) =
     member _.Get() =
         let context = base.HttpContext
         let query = context.Request.Query
-        if query.ContainsKey("pingAgent") then
-            let pingResponse = PingAgentAsync |> Async.RunSynchronously
-            OkObjectResult({ Status = $"Healthy - response from pinging agent service was: '{pingResponse}'" })
-        else
-            OkObjectResult({ Status = "Healthy" })
+        async {
+            if query.ContainsKey("pingAgent") then
+                let! response = PingAgentAsync
+                return OkObjectResult({ Status = $"Healthy - response from pinging agent service: '{response}'" })
+            else
+                return OkObjectResult({ Status = "Healthy" })
+        }
+
 
