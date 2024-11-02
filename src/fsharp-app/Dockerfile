@@ -7,8 +7,10 @@ RUN dotnet restore
 COPY . .
 RUN dotnet publish -c Release -o /app/out
 
-FROM mcr.microsoft.com/dotnet/runtime:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
+EXPOSE 5001
+ENV ASPNETCORE_URLS=http://*:5001
 COPY --from=build /app/out .
 
 ENTRYPOINT ["dotnet", "fsharp-app.dll"]
