@@ -12,7 +12,7 @@ type HealthCheckResponse = { Status: string }
 [<Route("[controller]")>]
 type HealthController (logger : ILogger<HealthController>) =
     inherit ControllerBase()
-    let client:HttpClient = new HttpClient()
+    let client = new HttpClient()
     let agentUri = Utils.agentUri
     let PingAgentAsync =
         async {
