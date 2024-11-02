@@ -237,6 +237,6 @@ Thumbs.db
 
 .env
 parameters.json
-containerParameters.json
+*Parameters.json
 setEnv.ps1
 
