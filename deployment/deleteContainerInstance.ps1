@@ -9,18 +9,20 @@ az account set --subscription $env:AZURE_SUBSCRIPTION_ID
 
 # Define variables
 $resourceGroupName = "stockripper"
-$containerGroupName = "stockripper-container"
 
-# Confirm deletion
-$confirmation = Read-Host "Are you sure you want to delete the container group '$containerGroupName' in resource group '$resourceGroupName'? (yes/no)"
-if ($confirmation -ne "yes") {
-    Write-Output "Deletion cancelled."
-    exit
+# List all container groups
+$containerGroups = az container list --resource-group $resourceGroupName --query "[].name" -o tsv
+
+if ($null -eq $containerGroups) {
+    Write-Output "No container groups found in resource group '$resourceGroupName'."
+    exit 0
 }
 
-# Delete the container instance
-Write-Output "Deleting the container group '$containerGroupName'..."
-az container delete --resource-group $resourceGroupName --name $containerGroupName --yes
+# Iterate through each container group and delete it
+foreach ($containerGroupName in $containerGroups) {
+    Write-Output "Deleting the container group '$containerGroupName'..."
+    az container delete --resource-group $resourceGroupName --name $containerGroupName --yes
+    Write-Output "Container group '$containerGroupName' has been deleted."
+}
 
-# Confirm deletion
-Write-Output "Container group '$containerGroupName' has been deleted."
+Write-Output "All container groups in resource group '$resourceGroupName' have been deleted."
