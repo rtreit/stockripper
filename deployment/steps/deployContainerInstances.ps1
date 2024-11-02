@@ -1,6 +1,6 @@
 $acrName = "stockrippercr"
 $resourceGroupName = "stockripper"
-$location = "westus2"
+$location = if ($env:AZURE_LOCATION) { $env:AZURE_LOCATION } else { az group list --query "[0].location" --output tsv }
 $containerGroupFSharp = "stockripper-fsharp-app"
 $containerGroupPython = "stockripper-python-app"
 
@@ -21,7 +21,6 @@ $envVarsArray = $envVars | ForEach-Object {
 }
 
 $acrName = "stockrippercr"
-$location = "eastus"
 
 $fsharpParameters = @{
     containerName = @{ "value" = $containerGroupFSharp }

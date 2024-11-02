@@ -1,3 +1,4 @@
+$location = if ($env:AZURE_LOCATION) { $env:AZURE_LOCATION } else { az group list --query "[0].location" --output tsv }
 $resourceGroupName = "stockripper"
 
 # Create the resource group if it doesn't exist
