@@ -13,5 +13,6 @@ else
 .\steps\deployContainerRegistry.ps1
 .\steps\pushContainerImages.ps1
 .\steps\deployCognitiveSearch.ps1
+.\steps\createVnet.ps1
 .\steps\deployContainerInstances.ps1
 

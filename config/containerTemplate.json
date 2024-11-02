@@ -22,14 +22,20 @@
         },
         "acrPassword": {
             "type": "securestring"
+        },
+        "subnetId": {
+            "type": "string"
         }
     },
     "resources": [
         {
             "type": "Microsoft.ContainerInstance/containerGroups",
-            "apiVersion": "2019-12-01",
+            "apiVersion": "2021-07-01",  
             "name": "[parameters('containerName')]",
             "location": "[parameters('location')]",
+            "identity": {
+                "type": "SystemAssigned"
+            },
             "properties": {
                 "containers": [
                     {
@@ -47,6 +53,11 @@
                     }
                 ],
                 "osType": "Linux",
+                "subnetIds": [
+                    {
+                        "id": "[parameters('subnetId')]"
+                    }
+                ],
                 "imageRegistryCredentials": [
                     {
                         "server": "[concat(parameters('acrName'), '.azurecr.io')]",

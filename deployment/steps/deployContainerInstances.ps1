@@ -3,6 +3,9 @@ $resourceGroupName = "stockripper"
 $location = if ($env:AZURE_LOCATION) { $env:AZURE_LOCATION } else { az group list --query "[0].location" --output tsv }
 $containerGroupFSharp = "stockripper-fsharp-app"
 $containerGroupPython = "stockripper-python-app"
+$vnetName = "stockripperVNet"
+$subnetName = "stockripperSubnet"
+$subnetId = az network vnet subnet show --resource-group $resourceGroupName --vnet-name $vnetName --name $subnetName --query "id" -o tsv
 
 az acr login --name $acrName
 
@@ -27,9 +30,10 @@ $fsharpParameters = @{
     acrName = @{ "value" = $acrName }
     imageName = @{ "value" = "$acrName.azurecr.io/stockripper-fsharp-app:latest" }
     location = @{ "value" = $location }
-    environmentVariables = @{ "value" = @($envVarsArray) }  # Wrap in an array
+    environmentVariables = @{ "value" = @($envVarsArray) }
     acrUsername = @{ "value" = $acrUsername }
     acrPassword = @{ "value" = $acrPassword }
+    subnetId = @{ "value" = $subnetId }
 }
 
 $pythonParameters = @{
@@ -37,10 +41,12 @@ $pythonParameters = @{
     acrName = @{ "value" = $acrName }
     imageName = @{ "value" = "$acrName.azurecr.io/stockripper-agent-app:latest" }
     location = @{ "value" = $location }
-    environmentVariables = @{ "value" = @($envVarsArray) }  # Wrap in an array
+    environmentVariables = @{ "value" = @($envVarsArray) }
     acrUsername = @{ "value" = $acrUsername }
     acrPassword = @{ "value" = $acrPassword }
+    subnetId = @{ "value" = $subnetId }
 }
+
 
 $fsharpParametersJson = $fsharpParameters | ConvertTo-Json -Depth 10 -Compress
 $pythonParametersJson = $pythonParameters | ConvertTo-Json -Depth 10 -Compress
@@ -56,3 +62,11 @@ az deployment group create --resource-group $resourceGroupName --template-file "
 
 remove-item $fsharpParametersFilePath
 remove-item $pythonParametersFilePath
+
+# Add DNS records so the containers can be accessed by name
+$fsharpIp = az container show --name $containerGroupFSharp --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
+$pythonIp = az container show --name $containerGroupPython --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
+
+$dnsZoneName = "stockripper.local"
+az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "fsharp" --ipv4-address $fsharpIp
+az network private-dns record-set a add-record --resource-group $resourceGroupName --zone-name $dnsZoneName --record-set-name "python" --ipv4-address $pythonIp
