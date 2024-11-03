@@ -5,9 +5,6 @@ open Microsoft.Extensions.Logging
 open System.Net.Http
 open System.Net.Http.Json
 open StockRipperFS
-open System
-open Microsoft.AspNetCore.Mvc
-open Microsoft.AspNetCore.Routing
 type HealthCheckResponse = { Status: string }
 
 [<ApiController>]
