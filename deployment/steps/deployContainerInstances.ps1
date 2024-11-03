@@ -3,6 +3,7 @@ $resourceGroupName = "stockripper"
 $location = if ($env:AZURE_LOCATION) { $env:AZURE_LOCATION } else { az group list --query "[0].location" --output tsv }
 $containerGroupFSharp = "stockripper-fsharp-app"
 $containerGroupPython = "stockripper-python-app"
+$containerGroupRust = "stockripper-rust-app"
 $vnetName = "stockripperVNet"
 $subnetName = "stockripperSubnet"
 $subnetId = az network vnet subnet show --resource-group $resourceGroupName --vnet-name $vnetName --name $subnetName --query "id" -o tsv
@@ -48,25 +49,42 @@ $pythonParameters = @{
     subnetId = @{ "value" = $subnetId }
 }
 
+$rustParameters = @{
+    containerName = @{ "value" = $containerGroupRust }
+    acrName = @{ "value" = $acrName }
+    imageName = @{ "value" = "$acrName.azurecr.io/stockripper-rust-app:latest" }
+    location = @{ "value" = $location }
+    environmentVariables = @{ "value" = @($envVarsArray) }
+    acrUsername = @{ "value" = $acrUsername }
+    acrPassword = @{ "value" = $acrPassword }
+    subnetId = @{ "value" = $subnetId }
+}
+
 
 $fsharpParametersJson = $fsharpParameters | ConvertTo-Json -Depth 10 -Compress
 $pythonParametersJson = $pythonParameters | ConvertTo-Json -Depth 10 -Compress
+$rustParametersJson = $rustParameters | ConvertTo-Json -Depth 10 -Compress
 
 $fsharpParametersFilePath = ".\fsharpContainerParameters.json"
 $pythonParametersFilePath = ".\pythonContainerParameters.json"
+$rustParametersFilePath = ".\rustContainerParameters.json"
 
 $fsharpParametersJson | Out-File -FilePath $fsharpParametersFilePath -Encoding ascii
 $pythonParametersJson | Out-File -FilePath $pythonParametersFilePath -Encoding ascii
+$rustParametersJson | Out-File -FilePath $rustParametersFilePath -Encoding ascii
 
 az deployment group create --resource-group $resourceGroupName --template-file "..\config\containerTemplate.json" --parameters @$fsharpParametersFilePath
 az deployment group create --resource-group $resourceGroupName --template-file "..\config\containerTemplate.json" --parameters @$pythonParametersFilePath
+az deployment group create --resource-group $resourceGroupName --template-file "..\config\containerTemplate.json" --parameters @$rustParametersFilePath
 
 remove-item $fsharpParametersFilePath
 remove-item $pythonParametersFilePath
+remove-item $rustParametersFilePath
 
 # Add DNS records so the containers can be accessed by name
 $fsharpIp = az container show --name $containerGroupFSharp --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 $pythonIp = az container show --name $containerGroupPython --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
+$rustIp = az container show --name $containerGroupRust --resource-group $resourceGroupName --query "ipAddress.ip" -o tsv
 
 # Function to check if a DNS record exists and add it if it doesn't
 function Add-DnsRecordIfNotExists($resourceGroupName, $dnsZoneName, $recordSetName, $ipAddress) {
@@ -93,3 +111,4 @@ function Add-DnsRecordIfNotExists($resourceGroupName, $dnsZoneName, $recordSetNa
 # Check and add DNS records if they don't already exist
 Add-DnsRecordIfNotExists -resourceGroupName $resourceGroupName -dnsZoneName $dnsZoneName -recordSetName "stockripper-fsharp-app" -ipAddress $fsharpIp
 Add-DnsRecordIfNotExists -resourceGroupName $resourceGroupName -dnsZoneName $dnsZoneName -recordSetName "stockripper-python-app" -ipAddress $pythonIp
+Add-DnsRecordIfNotExists -resourceGroupName $resourceGroupName -dnsZoneName $dnsZoneName -recordSetName "stockripper-rust-app" -ipAddress $rustIp
