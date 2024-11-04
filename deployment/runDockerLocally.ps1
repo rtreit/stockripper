@@ -25,7 +25,7 @@ foreach ($container in $containers) {
 $envFilePath = "..\config\.env" # Adjust the path to your .env file
 
 # Run containers with network aliases and environment variables from the .env file
-Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-agent-app -p 5000:5000 --network stockripper-network --network-alias stockripper-python-app.stockripper.internal --env-file $envFilePath stockripper-agent-app:latest"
+Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-agent-app -p 5000:5000 -p 5678:5678 -e FLASK_ENV=development --network stockripper-network --network-alias stockripper-python-app.stockripper.internal --env-file $envFilePath stockripper-agent-app:latest"
 Start-Sleep -Seconds 2
 Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-fsharp-app -p 5001:5001 --network stockripper-network --network-alias stockripper-fsharp-app.stockripper.internal --env-file $envFilePath stockripper-fsharp-app:latest"
 Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-rust-app -p 5002:5002 --network stockripper-network --network-alias stockripper-rust-app.stockripper.internal --env-file $envFilePath stockripper-rust-app:latest"
