@@ -15,3 +15,5 @@ pandas
 semantic-kernel
 finnhub-python
 flask
+gunicorn
+

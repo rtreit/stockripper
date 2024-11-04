@@ -2,10 +2,17 @@ import requests
 from flask import Flask, jsonify
 import logging
 import time
+import debugpy, os
 
 app = Flask(__name__)
 fsharpUri = "http://stockripper-fsharp-app.stockripper.internal:5001/health"
 rustUri = "http://stockripper-rust-app.stockripper.internal:5002/health"
+
+
+if os.environ.get("FLASK_ENV") == "development":
+    debugpy.listen(("0.0.0.0", 5678))
+    print("Waiting for debugger to attach...")
+    debugpy.wait_for_client()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

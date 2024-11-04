@@ -1,6 +1,10 @@
 FROM python:3-slim
 
+EXPOSE 5000
+EXPOSE 5678
+
 ENV PYTHONDONTWRITEBYTECODE=1
+
 ENV PYTHONUNBUFFERED=1
 
 RUN apt-get update && \
@@ -8,8 +12,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN python -m pip install --upgrade pip && \
-    python -m pip install -r requirements.txt
+RUN python -m pip install -r requirements.txt
 
 WORKDIR /app
 COPY . /app
@@ -17,6 +20,5 @@ COPY . /app
 RUN adduser -u 5678 --disabled-password --gecos "" appuser && chown -R appuser /app
 USER appuser
 
-EXPOSE 5000
+CMD ["python", "app.py"]
 
-CMD ["python", "debug.py"]
