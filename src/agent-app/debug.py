@@ -16,6 +16,9 @@ def health_check():
     response = requests.get(fsharpUri)
     health_check = response.json().get("status")
     logging.info(f'Response from FSharp service: {health_check}')
+    rust_response = requests.get(rustUri)
+    logging.info(f'Response from Rust service: {rust_response.text}')
+    logging.info(f'Response from Rust service: {rust_response.json().get("status")}')    
     return jsonify(status=f"I'm alive - response from calling FSharp service: {health_check}"), 200
 
 if __name__ == '__main__':
