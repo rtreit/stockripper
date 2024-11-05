@@ -6,6 +6,7 @@ azure-core
 azure-identity
 azure-mgmt-containerinstance
 azure-mgmt-core
+azure-storage-blob
 ipykernel
 ipython
 jupyter-black
