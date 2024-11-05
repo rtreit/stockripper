@@ -3,6 +3,8 @@ from azure.identity import DefaultAzureCredential, CredentialUnavailableError
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 import os
 import logging
+from pydantic import BaseModel, ValidationError
+from flask_pydantic import validate
 
 app = Flask(__name__)
 
@@ -21,15 +23,9 @@ if not AZURE_STORAGE_ACCOUNT_URL:
 logger.debug("Using DefaultAzureCredential for authentication")
 credential = DefaultAzureCredential()
 
-# Try to create the BlobServiceClient and catch any credential errors
 try:
+    # Create the BlobServiceClient
     blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential)
-    container_client = blob_service_client.get_container_client(AZURE_STORAGE_CONTAINER_NAME)
-    # Create container if it does not exist
-    if not container_client.exists():
-        container_client.create_container()
-        logger.info("The specified container did not exist and was created: %s", AZURE_STORAGE_CONTAINER_NAME)
-    logger.debug("Container verified: %s", AZURE_STORAGE_CONTAINER_NAME)
     logger.debug("BlobServiceClient successfully created.")
 except CredentialUnavailableError as e:
     logger.error("Credential unavailable: %s", str(e))
@@ -38,28 +34,49 @@ except Exception as e:
     logger.error("Failed to create BlobServiceClient: %s", str(e))
     raise
 
-@app.route('/api/storage/save', methods=['POST'])
-def save_to_storage():
+# Pydantic model for request validation
+class SaveToStorageRequest(BaseModel):
+    blob_name: str
+
+@validate()
+@app.route('/api/storage/save/<container_name>', methods=['POST'])
+def save_to_storage(container_name: str):
     try:
-        logger.debug("Received request to save file to storage.")
+        logger.debug("Received request to save file to storage. Container name: %s", container_name)
+
+        if 'file' not in request.files:
+            return jsonify({"error": "File is missing"}), 400
+
         file = request.files['file']
-        blob_name = request.form.get('blob_name', file.filename)
+        blob_name = request.form.get("blob_name", file.filename)
         logger.debug("Blob name: %s", blob_name)
-        
+
+        # Get the container client
+        container_client = blob_service_client.get_container_client(container_name)
+        # Create the container if it does not exist
+        if not container_client.exists():
+            container_client.create_container()
+            logger.debug("Container created: %s", container_name)
+
         # Upload the file to Azure Blob Storage
         blob_client = container_client.get_blob_client(blob_name)
         blob_client.upload_blob(file, overwrite=True)
         logger.debug("File uploaded successfully: %s", blob_name)
-        
+
         return jsonify({"message": "File uploaded successfully", "blob_name": blob_name}), 201
+    except ValidationError as e:
+        logger.error("Validation error: %s", str(e))
+        return jsonify({"error": e.errors()}), 400
     except Exception as e:
         logger.error("Error in save_to_storage: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/storage/get/<blob_name>', methods=['GET'])
-def get_from_storage(blob_name):
+@app.route('/api/storage/get/<container_name>/<blob_name>', methods=['GET'])
+def get_from_storage(container_name, blob_name):
     try:
-        logger.debug("Received request to get file from storage. Blob name: %s", blob_name)
+        logger.debug("Received request to get file from storage. Container name: %s, Blob name: %s", container_name, blob_name)
+        # Get the container client
+        container_client = blob_service_client.get_container_client(container_name)
         # Download the file from Azure Blob Storage
         blob_client = container_client.get_blob_client(blob_name)
         blob_data = blob_client.download_blob()
@@ -68,6 +85,68 @@ def get_from_storage(blob_name):
         return (blob_data.readall(), 200, {'Content-Type': 'application/octet-stream'})
     except Exception as e:
         logger.error("Error in get_from_storage: %s", str(e), exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/storage/list/containers', methods=['GET'])
+def list_containers():
+    try:
+        logger.debug("Received request to list all containers.")
+        containers = blob_service_client.list_containers()
+        container_names = [container.name for container in containers]
+        logger.debug("Containers listed successfully.")
+        
+        return jsonify({"containers": container_names}), 200
+    except Exception as e:
+        logger.error("Error in list_containers: %s", str(e), exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/storage/list/blobs/<container_name>', methods=['GET'])
+def list_blobs(container_name):
+    try:
+        logger.debug("Received request to list all blobs in container: %s", container_name)
+        container_client = blob_service_client.get_container_client(container_name)
+        blobs = container_client.list_blobs()
+        blob_names = [blob.name for blob in blobs]
+        logger.debug("Blobs listed successfully in container: %s", container_name)
+        
+        return jsonify({"blobs": blob_names}), 200
+    except Exception as e:
+        logger.error("Error in list_blobs: %s", str(e), exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/storage/create-container', methods=['POST'])
+def create_container():
+    try:
+        data = request.get_json()
+        container_name = data.get("container_name")
+        if not container_name:
+            return jsonify({"error": "Container name is required."}), 400
+
+        logger.debug("Received request to create container: %s", container_name)
+        container_client = blob_service_client.get_container_client(container_name)
+        if container_client.exists():
+            return jsonify({"message": "Container already exists."}), 200
+
+        container_client.create_container()
+        logger.debug("Container created successfully: %s", container_name)
+        return jsonify({"message": "Container created successfully", "container_name": container_name}), 201
+    except Exception as e:
+        logger.error("Error in create_container: %s", str(e), exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/storage/delete-container/<container_name>', methods=['DELETE'])
+def delete_container(container_name):
+    try:
+        logger.debug("Received request to delete container: %s", container_name)
+        container_client = blob_service_client.get_container_client(container_name)
+        if not container_client.exists():
+            return jsonify({"error": "Container does not exist."}), 404
+
+        container_client.delete_container()
+        logger.debug("Container deleted successfully: %s", container_name)
+        return jsonify({"message": "Container deleted successfully", "container_name": container_name}), 200
+    except Exception as e:
+        logger.error("Error in delete_container: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':

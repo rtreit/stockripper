@@ -17,4 +17,6 @@ semantic-kernel
 finnhub-python
 flask
 gunicorn
+pydantic
+flask_pydantic
 
