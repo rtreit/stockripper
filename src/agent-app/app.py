@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from azure.identity import AzureCliCredential, ManagedIdentityCredential, CredentialUnavailableError
+from azure.identity import DefaultAzureCredential, CredentialUnavailableError
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 import os
 import logging
@@ -13,23 +13,21 @@ logger = logging.getLogger(__name__)
 # Configuration for Azure Blob Storage
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
 AZURE_STORAGE_CONTAINER_NAME = os.getenv("AZURE_STORAGE_CONTAINER_NAME", "default-container")
-USER_ASSIGNED_CLIENT_ID = os.getenv("USER_ASSIGNED_CLIENT_ID")
 
 if not AZURE_STORAGE_ACCOUNT_URL:
     raise ValueError("AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL.")
 
-# Use ManagedIdentityCredential with User-Assigned Managed Identity if provided
-if USER_ASSIGNED_CLIENT_ID:
-    logger.debug("Using ManagedIdentityCredential with client ID: %s", USER_ASSIGNED_CLIENT_ID)
-    credential = ManagedIdentityCredential(client_id=USER_ASSIGNED_CLIENT_ID)
-else:
-    logger.debug("Using AzureCliCredential explicitly for local development")
-    credential = AzureCliCredential()
-
-# Try to create the BlobServiceClient and catch any credential errors
+# Use DefaultAzureCredential for authentication
 try:
+    logger.debug("Using DefaultAzureCredential for authentication")
+    credential = DefaultAzureCredential()
     blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential)
     container_client = blob_service_client.get_container_client(AZURE_STORAGE_CONTAINER_NAME)
+    # Verify container existence
+    if not container_client.exists():
+        logger.error("The specified container does not exist: %s", AZURE_STORAGE_CONTAINER_NAME)
+        raise ValueError(f"The specified container does not exist: {AZURE_STORAGE_CONTAINER_NAME}")
+    logger.debug("Container verified: %s", AZURE_STORAGE_CONTAINER_NAME)
     logger.debug("BlobServiceClient successfully created.")
 except CredentialUnavailableError as e:
     logger.error("Credential unavailable: %s", str(e))
