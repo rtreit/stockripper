@@ -18,15 +18,17 @@ if not AZURE_STORAGE_ACCOUNT_URL:
     raise ValueError("AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL.")
 
 # Use DefaultAzureCredential for authentication
+logger.debug("Using DefaultAzureCredential for authentication")
+credential = DefaultAzureCredential()
+
+# Try to create the BlobServiceClient and catch any credential errors
 try:
-    logger.debug("Using DefaultAzureCredential for authentication")
-    credential = DefaultAzureCredential()
     blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential)
     container_client = blob_service_client.get_container_client(AZURE_STORAGE_CONTAINER_NAME)
-    # Verify container existence
+    # Create container if it does not exist
     if not container_client.exists():
-        logger.error("The specified container does not exist: %s", AZURE_STORAGE_CONTAINER_NAME)
-        raise ValueError(f"The specified container does not exist: {AZURE_STORAGE_CONTAINER_NAME}")
+        container_client.create_container()
+        logger.info("The specified container did not exist and was created: %s", AZURE_STORAGE_CONTAINER_NAME)
     logger.debug("Container verified: %s", AZURE_STORAGE_CONTAINER_NAME)
     logger.debug("BlobServiceClient successfully created.")
 except CredentialUnavailableError as e:
