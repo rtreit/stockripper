@@ -34,7 +34,6 @@ except Exception as e:
     raise
 
 @app.route('/api/storage/containers/<container_name>/blobs', methods=['POST'])
-@app.route('/api/storage/containers/<container_name>/blobs', methods=['POST'])
 def save_to_storage(container_name: str):
     try:
         logger.debug("Received request to save files to storage. Container name: %s", container_name)

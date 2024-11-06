@@ -25,6 +25,15 @@
         },
         "subnetId": {
             "type": "string"
+        },
+        "identity": {
+            "type": "object",
+            "defaultValue": {
+                "type": "SystemAssigned"
+            },
+            "metadata": {
+                "description": "Identity configuration for the container instance."
+            }
         }
     },
     "resources": [
@@ -33,9 +42,7 @@
             "apiVersion": "2021-07-01",  
             "name": "[parameters('containerName')]",
             "location": "[parameters('location')]",
-            "identity": {
-                "type": "SystemAssigned"
-            },
+            "identity": "[if(equals(parameters('identity').type, 'UserAssigned'), parameters('identity'), json('{\"type\": \"SystemAssigned\"}'))]",
             "properties": {
                 "containers": [
                     {

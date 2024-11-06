@@ -45,7 +45,7 @@ class TestStorageAPI(unittest.TestCase):
         response = requests.get(f"{self.BASE_URL}/containers/test-container/blobs/test_blob.txt")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers['Content-Type'], 'application/octet-stream')
-        self.assertEqual(response.text, "This is a test file.")
+        self.assertEqual(response.text, "This is the third test file.")
 
     def test_list_containers(self):
         response = requests.get(f"{self.BASE_URL}/containers")
