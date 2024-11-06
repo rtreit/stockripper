@@ -57,7 +57,7 @@ def save_to_storage(container_name: str):
             logger.debug("Container created: %s", container_name)
 
         for file in files:
-            blob_name = blob_name_template or file.filename
+            blob_name = file.filename or blob_name_template
             blob_client = container_client.get_blob_client(blob_name)
             blob_client.upload_blob(file, overwrite=True)
             blob_names.append(blob_name)
