@@ -10,10 +10,12 @@ else
 .\steps\buildContainers.ps1
 .\steps\setSubscription.ps1
 .\steps\createResourceGroup.ps1
-.\createStorageAccount.ps1
+.\steps\createUAMI.ps1
+.\steps\createStorageAccount.ps1
 .\steps\deployContainerRegistry.ps1
 .\steps\pushContainerImages.ps1
 .\steps\deployCognitiveSearch.ps1
 .\steps\createVnet.ps1
+.\steps\grantStorageRBAC.ps1
 .\steps\deployContainerInstances.ps1
 

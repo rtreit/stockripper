@@ -1,3 +1,4 @@
+
 if (-not $env:AZURE_SUBSCRIPTION_ID) {
     Write-Output "AZURE_SUBSCRIPTION_ID environment variable is not set."
     exit 1
@@ -10,12 +11,35 @@ if (-not $env:MY_AZURE_OBJECT_ID) {
 
 Write-Output "Setting subscription to $env:AZURE_SUBSCRIPTION_ID"
 az account set --subscription $env:AZURE_SUBSCRIPTION_ID
-$subScriptionId = $env:AZURE_SUBSCRIPTION_ID
+$subscriptionId = $env:AZURE_SUBSCRIPTION_ID
 $resourceGroupName = "stockripper"
 $storageAccountName = "stockripperstg"
+$uamiDetailsFile = ".\uami_details.json"
 
+Write-Output "Assigning Storage Blob Data Contributor role to the user..."
 az role assignment create `
   --role "Storage Blob Data Contributor" `
-  --scope "/subscriptions/$subScriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.Storage/storageAccounts/$storageAccountName" `
+  --scope "/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.Storage/storageAccounts/$storageAccountName" `
   --assignee-object-id $env:MY_AZURE_OBJECT_ID
 
+if (Test-Path -Path $uamiDetailsFile) {
+    Write-Output "Reading UAMI details from $uamiDetailsFile..."
+    $uamiDetails = Get-Content -Path $uamiDetailsFile | ConvertFrom-Json
+    $uamiPrincipalId = $uamiDetails.principalId
+
+    if ($uamiPrincipalId) {
+        Write-Output "Assigning Storage Blob Data Contributor role to the UAMI..."
+        az role assignment create `
+          --role "Storage Blob Data Contributor" `
+          --scope "/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.Storage/storageAccounts/$storageAccountName" `
+          --assignee-object-id $uamiPrincipalId
+    } else {
+        Write-Output "Error: Could not find 'principalId' in $uamiDetailsFile."
+        exit 1
+    }
+} else {
+    Write-Output "Error: UAMI details file $uamiDetailsFile does not exist."
+    exit 1
+}
+
+Write-Output "Role assignments completed."
