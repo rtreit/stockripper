@@ -268,11 +268,8 @@ def delete_container(container_name):
         logger.error("Error in delete_container: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# Create Langchain Agent and Skills
 def create_agent():    
     model = ChatOpenAI(model="gpt-4o", openai_api_key=OPENAI_API_KEY)
-
-    # Define tools
 
     system_template = "You are an expert at translating from the input language to {language}." 
     prompt_template = ChatPromptTemplate.from_messages(
@@ -280,7 +277,7 @@ def create_agent():
     )    
     parser = StrOutputParser()
     chain = prompt_template | model | parser
-    result = chain.invoke({"language": "italian", "text": "I am a security researcher."})
+    result = chain.invoke({"language": "german", "text": "I am a security researcher."})
     return result
 
 # Main invocation
