@@ -21,4 +21,8 @@ pydantic
 flask_pydantic
 msal
 debugpy
-dotenv 
+python-dotenv 
+requests
+langchain
+langchain-community
+langchain-core

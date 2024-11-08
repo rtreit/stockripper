@@ -7,6 +7,14 @@ import debugpy
 import msal
 import requests
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from langchain_core.output_parsers import StrOutputParser
+from typing import Optional
+from pydantic import BaseModel, Field
+
 
 # Load environment variables from .env
 load_dotenv()
@@ -24,6 +32,7 @@ STOCKRIPPER_CLIENT_SECRET = os.getenv("STOCKRIPPER_CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
 REDIRECT_URI = "http://localhost:5000/getAToken"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Configuration for Azure Blob Storage
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
@@ -66,27 +75,26 @@ def refresh_auth_token():
     else:
         raise Exception(f"Failed to refresh token: {response.text}")
 
-
-@app.route('/api/mail/send', methods=['POST'])
-def send_mail():
+@tool
+def send_mail_internal(recipient: str, subject: str, body: str) -> dict:
+    """
+    This function sends an e-mail using the Microsoft Graph API.
+    It takes the recipient address, subject, and body as input.
+    """
     try:
-        data = request.get_json()
         logger.info("Received request to send e-mail.")
-        recipient = data.get("recipient")
         if not recipient:
-            return jsonify({"error": "Recipient address is required."}), 400
-        subject = data.get("subject")
+            raise ValueError("Recipient address is required.")
         if not subject:
-            return jsonify({"error": "Subject is required."}), 400
-        body = data.get("body")
+            raise ValueError("Subject is required.")
         if not body:
-            return jsonify({"error": "Body is required."}), 400
+            raise ValueError("Body is required.")
 
-        logger.debug(f"Received request to send e-mail to: {recipient}")
+        logger.debug(f"Sending e-mail to: {recipient}")
 
         # Refresh access token
         access_token = refresh_auth_token()
-        
+
         # Set up the email payload
         email_payload = {
             "message": {
@@ -119,14 +127,31 @@ def send_mail():
 
         if response.status_code == 202:
             logger.info("Email sent successfully to %s", recipient)
-            return jsonify({"message": "E-mail sent", "subject": subject}), 201
+            return {"message": "E-mail sent", "subject": subject}
         else:
             logger.error(f"Failed to send email. Status Code: {response.status_code}")
             logger.error(response.text)
-            return jsonify({"error": "Failed to send email", "details": response.text}), 500
+            raise RuntimeError(f"Failed to send email: {response.text}")
 
     except Exception as e:
-        logger.error("Error in send_mail: %s", str(e), exc_info=True)
+        logger.error("Error in send_mail_internal: %s", str(e), exc_info=True)
+        raise
+
+@app.route('/api/mail/send', methods=['POST'])
+def send_mail():
+    try:
+        data = request.get_json()
+        recipient = data.get("recipient")
+        subject = data.get("subject")
+        body = data.get("body")
+
+        # Call the internal function to send email
+        result = send_mail_internal(recipient, subject, body)
+        return jsonify(result), 201
+
+    except ValueError as ve:
+        return jsonify({"error": str(ve)}), 400
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 # Other routes related to Azure Blob Storage
@@ -243,7 +268,26 @@ def delete_container(container_name):
         logger.error("Error in delete_container: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+# Create Langchain Agent and Skills
+def create_agent():    
+    model = ChatOpenAI(model="gpt-4o", openai_api_key=OPENAI_API_KEY)
+
+    # Define tools
+
+    system_template = "You are an expert at translating from the input language to {language}." 
+    prompt_template = ChatPromptTemplate.from_messages(
+        [("system", system_template), ("user", "{text}")]
+    )    
+    parser = StrOutputParser()
+    chain = prompt_template | model | parser
+    result = chain.invoke({"language": "italian", "text": "I am a security researcher."})
+    return result
+
+# Main invocation
 if __name__ == '__main__':
+    test = create_agent()
+    print(test)
+
     if os.getenv("FLASK_ENV") == "development":
         logger.info("Waiting for debugger attach on port 5678...")
         debugpy.listen(('0.0.0.0', 5678))
