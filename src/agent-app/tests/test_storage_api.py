@@ -70,4 +70,5 @@ class TestStorageAPI(unittest.TestCase):
         self.assertIn("Container deleted successfully", response.json()["message"])
 
 if __name__ == "__main__":
+    import requests
     unittest.main()

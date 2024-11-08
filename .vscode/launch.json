@@ -1,7 +1,8 @@
 {
+    "version": "0.2.0",
     "configurations": [
         {
-            "name": "Docker: Python - General",
+            "name": "Docker: Python - Flask",
             "type": "docker",
             "request": "launch",
             "preLaunchTask": "docker-run: debug",
@@ -12,8 +13,24 @@
                         "remoteRoot": "/app"
                     }
                 ],
-                "projectType": "general"
+                "projectType": "flask"
             }
+        },
+        {
+            "name": "Python: Remote Attach",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": true
         }
     ]
 }

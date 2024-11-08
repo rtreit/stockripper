@@ -1,15 +1,29 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, redirect, jsonify
 from azure.identity import DefaultAzureCredential, CredentialUnavailableError
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 import os
 import logging
 import debugpy
+import msal
+import requests
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
 
 app = Flask(__name__)
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# Configuration for e-mail sending
+EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+STOCKRIPPER_CLIENT_ID = os.getenv("STOCKRIPPER_CLIENT_ID")
+STOCKRIPPER_CLIENT_SECRET = os.getenv("STOCKRIPPER_CLIENT_SECRET")
+TENANT_ID = os.getenv("TENANT_ID")
+REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
+REDIRECT_URI = "http://localhost:5000/getAToken"
 
 # Configuration for Azure Blob Storage
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
@@ -33,6 +47,89 @@ except Exception as e:
     logger.error("Failed to create BlobServiceClient: %s", str(e))
     raise
 
+# Function to refresh the access token using the refresh token
+def refresh_auth_token():
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    data = {
+        "client_id": STOCKRIPPER_CLIENT_ID,
+        "client_secret": STOCKRIPPER_CLIENT_SECRET,  # Add the client secret here
+        "scope": "offline_access openid profile Mail.Send",
+        "refresh_token": REFRESH_TOKEN,
+        "redirect_uri": REDIRECT_URI,
+        "grant_type": "refresh_token",
+    }
+    url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    response = requests.post(url, data=data, headers=headers)
+    if response.status_code == 200:
+        tokens = response.json()
+        return tokens.get("access_token")
+    else:
+        raise Exception(f"Failed to refresh token: {response.text}")
+
+
+@app.route('/api/mail/send', methods=['POST'])
+def send_mail():
+    try:
+        data = request.get_json()
+        logger.info("Received request to send e-mail.")
+        recipient = data.get("recipient")
+        if not recipient:
+            return jsonify({"error": "Recipient address is required."}), 400
+        subject = data.get("subject")
+        if not subject:
+            return jsonify({"error": "Subject is required."}), 400
+        body = data.get("body")
+        if not body:
+            return jsonify({"error": "Body is required."}), 400
+
+        logger.debug(f"Received request to send e-mail to: {recipient}")
+
+        # Refresh access token
+        access_token = refresh_auth_token()
+        
+        # Set up the email payload
+        email_payload = {
+            "message": {
+                "subject": subject,
+                "body": {
+                    "contentType": "Text",
+                    "content": body,
+                },
+                "toRecipients": [
+                    {
+                        "emailAddress": {
+                            "address": recipient,
+                        }
+                    }
+                ],
+            }
+        }
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+
+        # Send the email using Microsoft Graph API (/me/sendMail)
+        response = requests.post(
+            "https://graph.microsoft.com/v1.0/me/sendMail",
+            headers=headers,
+            json=email_payload,
+        )
+
+        if response.status_code == 202:
+            logger.info("Email sent successfully to %s", recipient)
+            return jsonify({"message": "E-mail sent", "subject": subject}), 201
+        else:
+            logger.error(f"Failed to send email. Status Code: {response.status_code}")
+            logger.error(response.text)
+            return jsonify({"error": "Failed to send email", "details": response.text}), 500
+
+    except Exception as e:
+        logger.error("Error in send_mail: %s", str(e), exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# Other routes related to Azure Blob Storage
 @app.route('/api/storage/containers/<container_name>/blobs', methods=['POST'])
 def save_to_storage(container_name: str):
     try:
@@ -67,8 +164,6 @@ def save_to_storage(container_name: str):
     except Exception as e:
         logger.error("Error in save_to_storage: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
-
-
 
 @app.route('/api/storage/containers/<container_name>/blobs/<blob_name>', methods=['GET'])
 def get_from_storage(container_name, blob_name):

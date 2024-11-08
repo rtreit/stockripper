@@ -19,4 +19,6 @@ flask
 gunicorn
 pydantic
 flask_pydantic
-
+msal
+debugpy
+dotenv 
