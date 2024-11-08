@@ -1,4 +1,3 @@
-from flask import Flask, request, redirect, jsonify
 from azure.identity import DefaultAzureCredential, CredentialUnavailableError
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 import os
@@ -208,13 +207,19 @@ def multiply(a: int, b: int) -> int:
    """Multiply two numbers."""
    return a * b
 
+# test out tools
 x = multiply.invoke({"a": 2, "b": 3})
 print(x)
 
 y = save_to_blob.invoke({"container_name": "summaries", "blob_name": "summary_of_BEC_attacks.txt", "file_content": "Detailed description of Business Email Compromise (BEC) attacks."})
 print(y)
 
+import math, random
+random_number = math.floor(random.random() * 100)
+z = send_email.invoke({"recipient": "randyt@microsoft.com", "subject": f"Test Email - {random_number}", "body": "This is a test email from Langchain."})
+print(z)
 
+print("Trying to use the agent")
 llm = ChatOpenAI(model="gpt-4o", openai_api_key=OPENAI_API_KEY)
 tools = [send_email, save_to_blob, list_blobs, list_containers, multiply]
 llm_with_tools = llm.bind_tools(tools)
