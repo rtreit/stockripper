@@ -14,6 +14,9 @@ from langchain.prompts import (
     MessagesPlaceholder,
     PromptTemplate,
 )
+from azure.search.documents import SearchClient
+from azure.search.documents.indexes import SearchIndexClient
+from azure.core.credentials import AzureKeyCredential
 
 # Load environment variables from a .env file.
 load_dotenv()
@@ -23,7 +26,30 @@ logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COGNITIVE_SEARCH_URL = os.getenv("COGNITIVE_SEARCH_URL")
-COGNITIVE_SEARCH_ADMIN_KEY = os.getenv("COGNITIVE_SEARCH_API_KEY")
+COGNITIVE_SEARCH_ADMIN_KEY = os.getenv("COGNITIVE_SEARCH_ADMIN_KEY")
+
+cognitive_search_endpoint = COGNITIVE_SEARCH_URL
+cognitive_search_key = COGNITIVE_SEARCH_ADMIN_KEY
+
+index_name = "conversation-memory" 
+
+index_client = SearchIndexClient(
+    endpoint=cognitive_search_endpoint,
+    credential=AzureKeyCredential(cognitive_search_key),
+)
+
+# create index if it doesn't exist
+try:
+    index_client.get_index(index_name)
+except Exception as e:
+    index_client.create_index(fields=[{"name": "id", "type": "Edm.String", "key": True}], name=index_name)
+    
+
+search_client = SearchClient(
+    endpoint=cognitive_search_endpoint,
+    index_name=index_name,
+    credential=AzureKeyCredential(cognitive_search_key),
+)
 
 
 app = Flask(__name__)
@@ -49,6 +75,25 @@ def generate_random_number(min: int, max: int) -> int:
         max (int): The maximum value of the random number.
     """
     return random.randint(min, max)
+
+def save_to_cognitive_search(conversation_summary, session_id):
+    try:
+        document = {
+            "id": session_id,
+            "content": conversation_summary
+        }
+        search_client.upload_documents(documents=[document])
+    except Exception as e:
+        logger.error(f"Error saving to Cognitive Search: {str(e)}", exc_info=True)
+
+def retrieve_from_cognitive_search(session_id):
+    try:
+        results = search_client.search(search_text="*", filter=f"id eq '{session_id}'")
+        for result in results:
+            return result["content"]
+    except Exception as e:
+        logger.error(f"Error retrieving from Cognitive Search: {str(e)}", exc_info=True)
+    return ""
 
 
 llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
