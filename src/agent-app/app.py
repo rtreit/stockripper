@@ -38,11 +38,16 @@ AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
 AZURE_STORAGE_CONTAINER_NAME = os.getenv(
     "AZURE_STORAGE_CONTAINER_NAME", "default-container"
 )
+COGNITIVE_SEARCH_URL = os.getenv("COGNITIVE_SEARCH_URL")
+COGNITIVE_SEARCH_ADMIN_KEY = os.getenv("COGNITIVE_SEARCH_API_KEY")
 
 if not AZURE_STORAGE_ACCOUNT_URL:
     raise ValueError(
         "AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL."
     )
+
+
+
 logger.debug("Using DefaultAzureCredential for authentication")
 
 credential = DefaultAzureCredential()
@@ -265,7 +270,7 @@ def generate_random_number(min: int, max: int) -> int:
     return random.randint(min, max)
 
 
-llm = ChatOpenAI(model="gpt-4o", openai_api_key=OPENAI_API_KEY)
+llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
 tools = [
     send_email,
     save_to_blob,
