@@ -1,7 +1,7 @@
 import unittest
 import requests, json
 import os
-
+import uuid, random
 
 class TestAgents(unittest.TestCase):
 
@@ -9,11 +9,13 @@ class TestAgents(unittest.TestCase):
 
     def test_invoke_mailworker(self):
         input = """
-        Write a friendly e-mail to fchopin@outlook.com. Sign it as "Randy". Open with dear Frederic. 
-        Compliment him on his latest composition. Ask him if he would like to collaborate on a new piece.
+        What's a random number plus another random number?
         """
         headers = {"Content-Type": "application/json"}
-        payload = {"input": f"{input}"}
+        # use fixed seed to ensure reproducibility for the session id - this will be used to identify the conversation for memory purposes
+        #session_id = uuid.UUID(int=random.getrandbits(128))
+        session_id = "704e0233-da20-431e-be57-0f6ffc94bf32"
+        payload = {"input": f"{input}", "session_id": f"{session_id}"}
         response = requests.post(
             f"{self.BASE_URL}/agents/mailworker",
             headers=headers,

@@ -1,18 +1,23 @@
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents import SearchClient, IndexDocumentsBatch
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import (
+    SimpleField,
+    SearchIndex,
+    SearchableField,
+)
+from azure.search.documents.models import IndexAction
 from flask import Flask, request, jsonify
 from azure.identity import DefaultAzureCredential, CredentialUnavailableError
-from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from azure.storage.blob import BlobServiceClient
 import os
 import logging
 import requests
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.tools import tool
-from langchain_core.output_parsers import StrOutputParser
-from typing import Optional
-from pydantic import BaseModel, Field
 import random
+import tiktoken
+from dotenv import load_dotenv
+from langchain.chat_models import ChatOpenAI
+from langchain.tools import tool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain.prompts import (
     ChatPromptTemplate,
@@ -21,12 +26,20 @@ from langchain.prompts import (
     MessagesPlaceholder,
     PromptTemplate,
 )
+from langchain.memory import ConversationSummaryBufferMemory
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 
 # Load environment variables from a .env file.
 load_dotenv()
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# Adjust token limits based on the model's context window
+MAX_TOKENS_TOTAL = 8192  # For GPT-4 standard context window
+SUMMARY_MAX_TOKENS = 500  # Token limit for the summary
+RECENT_CONTEXT_MAX_TOKENS = 1000  # Token limit for recent context
+RESPONSE_TOKENS_MAX = 1000  # Tokens allocated for the model's response
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
@@ -35,19 +48,16 @@ REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
 REDIRECT_URI = "http://localhost:5000/getAToken"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
+COGNITIVE_SEARCH_URL = os.getenv("COGNITIVE_SEARCH_URL")
+COGNITIVE_SEARCH_ADMIN_KEY = os.getenv("COGNITIVE_SEARCH_ADMIN_KEY")
 AZURE_STORAGE_CONTAINER_NAME = os.getenv(
     "AZURE_STORAGE_CONTAINER_NAME", "default-container"
 )
-COGNITIVE_SEARCH_URL = os.getenv("COGNITIVE_SEARCH_URL")
-COGNITIVE_SEARCH_ADMIN_KEY = os.getenv("COGNITIVE_SEARCH_API_KEY")
 
 if not AZURE_STORAGE_ACCOUNT_URL:
     raise ValueError(
         "AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL."
     )
-
-
-
 logger.debug("Using DefaultAzureCredential for authentication")
 
 credential = DefaultAzureCredential()
@@ -66,6 +76,90 @@ except Exception as e:
     logger.error("Failed to create BlobServiceClient: %s", str(e))
     raise
 
+index_client = SearchIndexClient(
+    endpoint=COGNITIVE_SEARCH_URL,
+    credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
+)
+
+
+def get_search_client_for_agent(agent_name: str) -> SearchClient:
+    index_name = f"agent-memory-{agent_name}"
+    return SearchClient(
+        endpoint=COGNITIVE_SEARCH_URL,
+        index_name=index_name,
+        credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
+    )
+
+
+def count_tokens(text, model_name="gpt-4"):
+    encoding = tiktoken.encoding_for_model(model_name)
+    return len(encoding.encode(text))
+
+
+def create_index_if_not_exists(agent_name: str):
+    try:
+        index_name = f"agent-memory-{agent_name}"
+        try:
+            index_client.get_index(index_name)
+            logger.debug(f"Index '{index_name}' already exists.")
+        except:
+            logger.info(f"Index '{index_name}' does not exist. Creating it now.")
+            index = SearchIndex(
+                name=index_name,
+                fields=[
+                    SimpleField(name="id", type="Edm.String", key=True),
+                    SearchableField(name="conversation", type="Edm.String"),
+                ],
+            )
+            index_client.create_index(index)
+            logger.info(f"Index '{index_name}' created successfully.")
+
+    except Exception as e:
+        logger.error("Error creating index: %s", str(e))
+        raise
+
+
+def save_conversation_to_search(agent_name: str, session_id: str, conversation: str):
+    try:
+        # Sanitize the conversation before saving
+        sanitized_conversation = sanitize_conversation(conversation)
+        search_client = get_search_client_for_agent(agent_name)
+
+        # Create an IndexDocumentsBatch and add actions
+        batch = IndexDocumentsBatch()
+        batch.add_upload_actions(
+            [{"id": session_id, "conversation": sanitized_conversation}]
+        )
+
+        # Use the batch in the index_documents method
+        result = search_client.index_documents(batch=batch)
+        logger.debug("Conversation saved to Azure Cognitive Search: %s", result)
+    except Exception as e:
+        logger.error("Error saving conversation to Cognitive Search: %s", str(e))
+        raise
+
+
+def load_conversation_from_search(agent_name: str, session_id: str) -> str:
+    try:
+        search_client = get_search_client_for_agent(agent_name)
+        result = search_client.get_document(key=session_id)
+        conversation = result.get("conversation", "")
+        return sanitize_conversation(conversation)
+    except Exception as e:
+        logger.warning(
+            "Conversation not found for session_id %s: %s", session_id, str(e)
+        )
+        return ""
+
+
+def sanitize_conversation(conversation):
+    # Implement sanitization logic
+    # For example, remove sensitive information or escape problematic characters
+    sanitized_conversation = conversation.replace("\\", "\\\\").replace(
+        "\n", "\\n"
+    ).replace("\r", "\\r")
+    return sanitized_conversation
+
 
 def refresh_auth_token():
     """
@@ -75,7 +169,7 @@ def refresh_auth_token():
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     data = {
         "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,  # Add the client secret here
+        "client_secret": CLIENT_SECRET,
         "scope": "offline_access openid profile Mail.Send",
         "refresh_token": REFRESH_TOKEN,
         "redirect_uri": REDIRECT_URI,
@@ -91,29 +185,54 @@ def refresh_auth_token():
 
 
 @tool("send_email")
-def send_email(recipient: str, subject: str, body: str) -> dict:
+def send_email(
+    to_recipients: list, subject: str, body: str, cc_recipients: list = None
+) -> dict:
     """
     Send an email using the Microsoft Graph API.
 
     Args:
-        recipient (str): The email address of the recipient.
+        to_recipients (list): A list of email addresses for the primary recipients.
         subject (str): The subject of the email.
         body (str): The content of the email body.
+        cc_recipients (list, optional): A list of email addresses for CC recipients.
 
     Returns:
         dict: A dictionary containing the result message and the subject of the email.
     """
     try:
         logger.info("Received request to send e-mail.")
-        if not recipient:
-            raise ValueError("Recipient address is required.")
+
+        if (
+            not to_recipients
+            or not isinstance(to_recipients, list)
+            or len(to_recipients) == 0
+        ):
+            raise ValueError(
+                "At least one recipient address is required in 'to_recipients'."
+            )
         if not subject:
             raise ValueError("Subject is required.")
         if not body:
             raise ValueError("Body is required.")
 
-        logger.debug(f"Sending e-mail to: {recipient}")
+        logger.debug(
+            f"Sending e-mail to: {', '.join(to_recipients)} with CC: {', '.join(cc_recipients or [])}"
+        )
         access_token = refresh_auth_token()
+
+        # Format the recipients for the "to" field
+        to_addresses = [
+            {"emailAddress": {"address": email}} for email in to_recipients
+        ]
+
+        # Format the recipients for the "cc" field, if provided
+        cc_addresses = (
+            [{"emailAddress": {"address": email}} for email in cc_recipients]
+            if cc_recipients
+            else []
+        )
+
         email_payload = {
             "message": {
                 "subject": subject,
@@ -121,13 +240,8 @@ def send_email(recipient: str, subject: str, body: str) -> dict:
                     "contentType": "Text",
                     "content": body,
                 },
-                "toRecipients": [
-                    {
-                        "emailAddress": {
-                            "address": recipient,
-                        }
-                    }
-                ],
+                "toRecipients": to_addresses,
+                "ccRecipients": cc_addresses,
             }
         }
 
@@ -141,14 +255,16 @@ def send_email(recipient: str, subject: str, body: str) -> dict:
             json=email_payload,
         )
         if response.status_code == 202:
-            logger.info("Email sent successfully to %s", recipient)
+            logger.info("Email sent successfully to %s", ", ".join(to_recipients))
             return {"message": "E-mail sent", "subject": subject}
         else:
-            logger.error(f"Failed to send email. Status Code: {response.status_code}")
+            logger.error(
+                f"Failed to send email. Status Code: {response.status_code}"
+            )
             logger.error(response.text)
             raise RuntimeError(f"Failed to send email: {response.text}")
     except Exception as e:
-        logger.error("Error in send_mail_internal: %s", str(e), exc_info=True)
+        logger.error("Error in send_email: %s", str(e), exc_info=True)
         raise
 
 
@@ -235,7 +351,7 @@ def list_containers() -> dict:
         return {"error": str(e)}
 
 
-# example from https://python.langchain.com/docs/concepts/tools/
+# Example tools
 @tool("multiply")
 def multiply(a: int, b: int) -> int:
     """Multiply two numbers."""
@@ -262,15 +378,14 @@ def subtract(a: int, b: int) -> int:
 
 @tool("generate_random_number")
 def generate_random_number(min: int, max: int) -> int:
-    """Generate a random number between min and max.
-    Args:
-        min (int): The minimum value of the random number.
-        max (int): The maximum value of the random number.
-    """
+    """Generate a random number between min and max."""
     return random.randint(min, max)
 
 
-llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
+# Initialize the language model
+llm = ChatOpenAI(model_name="gpt-4", openai_api_key=OPENAI_API_KEY)
+
+# Define the tools
 tools = [
     send_email,
     save_to_blob,
@@ -282,7 +397,16 @@ tools = [
     subtract,
     generate_random_number,
 ]
-llm_with_tools = llm.bind_tools(tools)
+
+llm_with_tools  = llm.bind_tools(tools)
+# Initialize memory
+memory = ConversationSummaryBufferMemory(
+    llm=llm,
+    max_token_limit=MAX_TOKENS_TOTAL - RESPONSE_TOKENS_MAX,
+    memory_key="chat_history",
+    input_key="input",
+)
+
 
 system_message = SystemMessagePromptTemplate(
     prompt=PromptTemplate(
@@ -314,25 +438,51 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-agent = create_tool_calling_agent(llm, tools, prompt)
+agent = create_tool_calling_agent(llm_with_tools, prompt)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
 
-
 # Flask endpoint to expose agent
-@app.route("/agents/mailworker", methods=["POST"])
-def invoke_agent():
+@app.route("/agents/<agent_name>", methods=["POST"])
+def invoke_agent(agent_name):
     try:
-        # Extract the JSON payload from the request
         data = request.get_json()
         user_prompt = data.get("input")
+        session_id = data.get("session_id")
+
         if not user_prompt:
-            return jsonify({"error": "Missing 'input' parameter in request body"}), 400
+            return (
+                jsonify({"error": "Missing 'input' parameter in request body"}),
+                400,
+            )
+        if not session_id:
+            return (
+                jsonify({"error": "Missing 'session_id' parameter in request body"}),
+                400,
+            )
 
-        # Invoke the agent with the given user prompt
-        result = agent_executor.invoke({"input": user_prompt})
+        create_index_if_not_exists(agent_name)
 
-        # Return the agent's response as JSON
+        # Load conversation history from search and set it in memory
+        conversation_history = load_conversation_from_search(agent_name, session_id)
+        if conversation_history:
+            # Convert the conversation string back into messages
+            messages = []
+            for line in conversation_history.strip().split("\n"):
+                if line.startswith("User:"):
+                    messages.append(HumanMessage(content=line[5:].strip()))
+                elif line.startswith("Assistant:"):
+                    messages.append(AIMessage(content=line[10:].strip()))
+            memory.chat_memory.messages = messages
+
+        # Run the agent
+        result = agent_executor.run(user_prompt)
+
+        # Append the new exchange to the conversation
+        new_conversation = conversation_history + f"\nUser: {user_prompt}\nAssistant: {result}"
+        save_conversation_to_search(agent_name, session_id, new_conversation)
+
         return jsonify({"result": result})
+
     except Exception as e:
         logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
