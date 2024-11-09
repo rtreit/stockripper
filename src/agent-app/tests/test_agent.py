@@ -9,13 +9,8 @@ class TestAgents(unittest.TestCase):
 
     def test_invoke_mailworker(self):
         input = """
-        Generate a random number between 1 and 10.
-        Count the number of blobs in the storage account. 
-        Compare them with the random number. 
-        If the number of blobs is greater than the random number, send an ascii image of a chicken to charlottetreit@outlook.com
-        If the number of blobs is less than the random number, send an ascii image of a golden retriever to charlottetreit@outlook.com.
-        In each case include a poem about the animal.
-        Repeat this process 3 times, using a different random number each time. 
+        Write a friendly e-mail to fchopin@outlook.com. Sign it as "Randy". Open with dear Frederic. 
+        Compliment him on his latest composition. Ask him if he would like to collaborate on a new piece.
         """
         headers = {"Content-Type": "application/json"}
         payload = {"input": f"{input}"}
