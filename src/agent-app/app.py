@@ -1,10 +1,8 @@
-from flask import Flask, request, redirect, jsonify
+from flask import Flask, request, jsonify
 from azure.identity import DefaultAzureCredential, CredentialUnavailableError
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 import os
 import logging
-import debugpy
-import msal
 import requests
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -14,40 +12,47 @@ from langchain_core.tools import tool
 from langchain_core.output_parsers import StrOutputParser
 from typing import Optional
 from pydantic import BaseModel, Field
+import random
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.prompts import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+    MessagesPlaceholder,
+    PromptTemplate,
+)
 
-
-# Load environment variables from .env
+# Load environment variables from a .env file.
 load_dotenv()
 
-app = Flask(__name__)
-
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# Configuration for e-mail sending
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-STOCKRIPPER_CLIENT_ID = os.getenv("STOCKRIPPER_CLIENT_ID")
-STOCKRIPPER_CLIENT_SECRET = os.getenv("STOCKRIPPER_CLIENT_SECRET")
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
 REDIRECT_URI = "http://localhost:5000/getAToken"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Configuration for Azure Blob Storage
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
-AZURE_STORAGE_CONTAINER_NAME = os.getenv("AZURE_STORAGE_CONTAINER_NAME", "default-container")
+AZURE_STORAGE_CONTAINER_NAME = os.getenv(
+    "AZURE_STORAGE_CONTAINER_NAME", "default-container"
+)
 
 if not AZURE_STORAGE_ACCOUNT_URL:
-    raise ValueError("AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL.")
-
-# Use DefaultAzureCredential for authentication
+    raise ValueError(
+        "AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL."
+    )
 logger.debug("Using DefaultAzureCredential for authentication")
+
 credential = DefaultAzureCredential()
 
+app = Flask(__name__)
+
 try:
-    # Create the BlobServiceClient
-    blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential)
+    blob_service_client = BlobServiceClient(
+        account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential
+    )
     logger.debug("BlobServiceClient successfully created.")
 except CredentialUnavailableError as e:
     logger.error("Credential unavailable: %s", str(e))
@@ -56,12 +61,16 @@ except Exception as e:
     logger.error("Failed to create BlobServiceClient: %s", str(e))
     raise
 
-# Function to refresh the access token using the refresh token
+
 def refresh_auth_token():
+    """
+    Refresh the Microsoft Graph API authentication token using the refresh token.
+    Returns the new access token if successful.
+    """
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     data = {
-        "client_id": STOCKRIPPER_CLIENT_ID,
-        "client_secret": STOCKRIPPER_CLIENT_SECRET,  # Add the client secret here
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,  # Add the client secret here
         "scope": "offline_access openid profile Mail.Send",
         "refresh_token": REFRESH_TOKEN,
         "redirect_uri": REDIRECT_URI,
@@ -75,11 +84,19 @@ def refresh_auth_token():
     else:
         raise Exception(f"Failed to refresh token: {response.text}")
 
-@tool
-def send_mail_internal(recipient: str, subject: str, body: str) -> dict:
+
+@tool("send_email")
+def send_email(recipient: str, subject: str, body: str) -> dict:
     """
-    This function sends an e-mail using the Microsoft Graph API.
-    It takes the recipient address, subject, and body as input.
+    Send an email using the Microsoft Graph API.
+
+    Args:
+        recipient (str): The email address of the recipient.
+        subject (str): The subject of the email.
+        body (str): The content of the email body.
+
+    Returns:
+        dict: A dictionary containing the result message and the subject of the email.
     """
     try:
         logger.info("Received request to send e-mail.")
@@ -91,11 +108,7 @@ def send_mail_internal(recipient: str, subject: str, body: str) -> dict:
             raise ValueError("Body is required.")
 
         logger.debug(f"Sending e-mail to: {recipient}")
-
-        # Refresh access token
         access_token = refresh_auth_token()
-
-        # Set up the email payload
         email_payload = {
             "message": {
                 "subject": subject,
@@ -117,14 +130,11 @@ def send_mail_internal(recipient: str, subject: str, body: str) -> dict:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
-
-        # Send the email using Microsoft Graph API (/me/sendMail)
         response = requests.post(
             "https://graph.microsoft.com/v1.0/me/sendMail",
             headers=headers,
             json=email_payload,
         )
-
         if response.status_code == 202:
             logger.info("Email sent successfully to %s", recipient)
             return {"message": "E-mail sent", "subject": subject}
@@ -132,161 +142,197 @@ def send_mail_internal(recipient: str, subject: str, body: str) -> dict:
             logger.error(f"Failed to send email. Status Code: {response.status_code}")
             logger.error(response.text)
             raise RuntimeError(f"Failed to send email: {response.text}")
-
     except Exception as e:
         logger.error("Error in send_mail_internal: %s", str(e), exc_info=True)
         raise
 
-@app.route('/api/mail/send', methods=['POST'])
-def send_mail():
+
+@tool("save_to_blob")
+def save_to_blob(container_name: str, blob_name: str, file_content: bytes) -> dict:
+    """
+    Save a file to Azure Blob Storage.
+
+    Args:
+        container_name (str): The name of the Azure Blob container.
+        blob_name (str): The name of the blob (file) to be created.
+        file_content (bytes): The content of the file to be uploaded.
+
+    Returns:
+        dict: A dictionary containing a success message and the blob name.
+    """
     try:
-        data = request.get_json()
-        recipient = data.get("recipient")
-        subject = data.get("subject")
-        body = data.get("body")
-
-        # Call the internal function to send email
-        result = send_mail_internal(recipient, subject, body)
-        return jsonify(result), 201
-
-    except ValueError as ve:
-        return jsonify({"error": str(ve)}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Other routes related to Azure Blob Storage
-@app.route('/api/storage/containers/<container_name>/blobs', methods=['POST'])
-def save_to_storage(container_name: str):
-    try:
-        logger.debug("Received request to save files to storage. Container name: %s", container_name)
-
-        # Validate if any files are provided
-        if 'file' not in request.files:
-            return jsonify({"error": "No files provided"}), 400
-
-        files = request.files.getlist('file')
-        blob_names = []
-
-        # Use form data instead of JSON for blob_name
-        blob_name_template = request.form.get("blob_name")  # Optional blob name template
-
-        # Initialize the container client
+        logger.debug(
+            "Saving file to blob storage. Container: %s, Blob: %s",
+            container_name,
+            blob_name,
+        )
         container_client = blob_service_client.get_container_client(container_name)
-        # Create the container if it does not exist
+
         if not container_client.exists():
             container_client.create_container()
             logger.debug("Container created: %s", container_name)
 
-        for file in files:
-            blob_name = file.filename or blob_name_template
-            blob_client = container_client.get_blob_client(blob_name)
-            blob_client.upload_blob(file, overwrite=True)
-            blob_names.append(blob_name)
-            logger.debug("File uploaded successfully: %s", blob_name)
-
-        return jsonify({"message": "Files uploaded successfully", "blob_names": blob_names}), 201
-
-    except Exception as e:
-        logger.error("Error in save_to_storage: %s", str(e), exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/storage/containers/<container_name>/blobs/<blob_name>', methods=['GET'])
-def get_from_storage(container_name, blob_name):
-    try:
-        logger.debug("Received request to get file from storage. Container name: %s, Blob name: %s", container_name, blob_name)
-        # Get the container client
-        container_client = blob_service_client.get_container_client(container_name)
-        # Download the file from Azure Blob Storage
         blob_client = container_client.get_blob_client(blob_name)
-        blob_data = blob_client.download_blob()
-        logger.debug("File downloaded successfully: %s", blob_name)
-        
-        return (blob_data.readall(), 200, {'Content-Type': 'application/octet-stream'})
-    except Exception as e:
-        logger.error("Error in get_from_storage: %s", str(e), exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        blob_client.upload_blob(file_content, overwrite=True)
+        logger.debug("File uploaded successfully: %s", blob_name)
 
-@app.route('/api/storage/containers', methods=['GET'])
-def list_containers():
-    try:
-        logger.debug("Received request to list all containers.")
-        containers = blob_service_client.list_containers()
-        container_names = [container.name for container in containers]
-        logger.debug("Containers listed successfully.")
-        
-        return jsonify({"containers": container_names}), 200
+        return {"message": "File uploaded successfully", "blob_name": blob_name}
     except Exception as e:
-        logger.error("Error in list_containers: %s", str(e), exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        logger.error("Error in save_to_blob: %s", str(e), exc_info=True)
+        return {"error": str(e)}
 
-@app.route('/api/storage/containers/<container_name>/blobs', methods=['GET'])
-def list_blobs(container_name):
+
+@tool("list_blobs")
+def list_blobs(container_name: str) -> dict:
+    """
+    List all blobs in a specified Azure Blob container.
+
+    Args:
+        container_name (str): The name of the Azure Blob container.
+
+    Returns:
+        dict: A dictionary containing the result message and the list of blob names.
+    """
     try:
-        logger.debug("Received request to list all blobs in container: %s", container_name)
+        logger.debug("Listing blobs in container: %s", container_name)
         container_client = blob_service_client.get_container_client(container_name)
-        blobs = container_client.list_blobs()
-        blob_names = [blob.name for blob in blobs]
-        logger.debug("Blobs listed successfully in container: %s", container_name)
-        
-        return jsonify({"blobs": blob_names}), 200
+
+        blob_list = container_client.list_blobs()
+        blobs = [blob.name for blob in blob_list]
+        logger.debug("Blobs listed successfully: %s", blobs)
+
+        return {"message": "Blobs listed successfully", "blobs": blobs}
     except Exception as e:
         logger.error("Error in list_blobs: %s", str(e), exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@app.route('/api/storage/containers', methods=['POST'])
-def create_container():
+
+@tool("list_containers")
+def list_containers() -> dict:
+    """
+    List all containers in Azure Blob Storage.
+
+    Returns:
+        dict: A dictionary containing the result message and the list of container names.
+    """
     try:
+        logger.debug("Listing all containers in blob storage")
+        containers = blob_service_client.list_containers()
+        container_names = [container.name for container in containers]
+        logger.debug("Containers listed successfully: %s", container_names)
+
+        return {
+            "message": "Containers listed successfully",
+            "containers": container_names,
+        }
+    except Exception as e:
+        logger.error("Error in list_containers: %s", str(e), exc_info=True)
+        return {"error": str(e)}
+
+
+# example from https://python.langchain.com/docs/concepts/tools/
+@tool("multiply")
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers."""
+    return a * b
+
+
+@tool("divide")
+def divide(a: int, b: int) -> float:
+    """Divide two numbers."""
+    return a / b
+
+
+@tool("add")
+def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+
+
+@tool("subtract")
+def subtract(a: int, b: int) -> int:
+    """Subtract two numbers."""
+    return a - b
+
+
+@tool("generate_random_number")
+def generate_random_number(min: int, max: int) -> int:
+    """Generate a random number between min and max.
+    Args:
+        min (int): The minimum value of the random number.
+        max (int): The maximum value of the random number.
+    """
+    return random.randint(min, max)
+
+
+llm = ChatOpenAI(model="gpt-4o", openai_api_key=OPENAI_API_KEY)
+tools = [
+    send_email,
+    save_to_blob,
+    list_blobs,
+    list_containers,
+    multiply,
+    divide,
+    add,
+    subtract,
+    generate_random_number,
+]
+llm_with_tools = llm.bind_tools(tools)
+
+system_message = SystemMessagePromptTemplate(
+    prompt=PromptTemplate(
+        input_variables=[],
+        input_types={},
+        partial_variables={},
+        template="You are a helpful assistant that summarizes data and provides it to the user. You can also send emails, save files to Azure Blob Storage, and perform basic arithmetic operations.",
+    ),
+    additional_kwargs={},
+)
+
+human_message = HumanMessagePromptTemplate(
+    prompt=PromptTemplate(
+        input_variables=["input"],
+        input_types={},
+        partial_variables={},
+        template="{input}",
+    ),
+    additional_kwargs={},
+)
+
+# Create the ChatPromptTemplate with placeholders for chat history and agent scratchpad
+prompt = ChatPromptTemplate.from_messages(
+    [
+        system_message,
+        MessagesPlaceholder(variable_name="chat_history", optional=True),
+        human_message,
+        MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ]
+)
+
+agent = create_tool_calling_agent(llm, tools, prompt)
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+
+# Flask endpoint to expose agent
+@app.route("/agents/mailworker", methods=["POST"])
+def invoke_agent():
+    try:
+        # Extract the JSON payload from the request
         data = request.get_json()
-        container_name = data.get("container_name")
-        if not container_name:
-            return jsonify({"error": "Container name is required."}), 400
+        user_prompt = data.get("input")
+        if not user_prompt:
+            return jsonify({"error": "Missing 'input' parameter in request body"}), 400
 
-        logger.debug("Received request to create container: %s", container_name)
-        container_client = blob_service_client.get_container_client(container_name)
-        if container_client.exists():
-            return jsonify({"message": "Container already exists."}), 200
+        # Invoke the agent with the given user prompt
+        result = agent_executor.invoke({"input": user_prompt})
 
-        container_client.create_container()
-        logger.debug("Container created successfully: %s", container_name)
-        return jsonify({"message": "Container created successfully", "container_name": container_name}), 201
+        # Return the agent's response as JSON
+        return jsonify({"result": result})
     except Exception as e:
-        logger.error("Error in create_container: %s", str(e), exc_info=True)
+        logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/storage/containers/<container_name>', methods=['DELETE'])
-def delete_container(container_name):
-    try:
-        logger.debug("Received request to delete container: %s", container_name)
-        container_client = blob_service_client.get_container_client(container_name)
-        if not container_client.exists():
-            return jsonify({"error": "Container does not exist."}), 404
 
-        container_client.delete_container()
-        logger.debug("Container deleted successfully: %s", container_name)
-        return jsonify({"message": "Container deleted successfully", "container_name": container_name}), 200
-    except Exception as e:
-        logger.error("Error in delete_container: %s", str(e), exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-def create_agent():    
-    model = ChatOpenAI(model="gpt-4o", openai_api_key=OPENAI_API_KEY)
-
-    system_template = "You are an expert at translating from the input language to {language}." 
-    prompt_template = ChatPromptTemplate.from_messages(
-        [("system", system_template), ("user", "{text}")]
-    )    
-    parser = StrOutputParser()
-    chain = prompt_template | model | parser
-    result = chain.invoke({"language": "german", "text": "I am a security researcher."})
-    return result
-
-# Main invocation
-if __name__ == '__main__':
-    test = create_agent()
-    print(test)
-
-    if os.getenv("FLASK_ENV") == "development":
-        logger.info("Waiting for debugger attach on port 5678...")
-        debugpy.listen(('0.0.0.0', 5678))
-        debugpy.wait_for_client()  # Wait for the debugger to attach    
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    # Run the Flask app on port 5000
+    app.run(host="0.0.0.0", port=5000, debug=True)
