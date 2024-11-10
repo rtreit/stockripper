@@ -21,6 +21,11 @@ from azure.core.credentials import AzureKeyCredential
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_openai import AzureOpenAIEmbeddings, OpenAIEmbeddings
+from langchain_community.retrievers import WikipediaRetriever
+
+retriever = WikipediaRetriever()
+docs = retriever.invoke("TOKYO GHOUL")
+print(docs[0].page_content[:400])
 
 # Load environment variables from a .env file.
 load_dotenv()
@@ -76,18 +81,18 @@ vector_store: AzureSearch = AzureSearch(
     embedding_function=embeddings.embed_query,
 )
 
-# test vector search
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import CharacterTextSplitter
-
-# load all documents in the documents folder
-for file in os.listdir("documents"):
-    if file.endswith(".txt"):
-        loader = TextLoader(f"documents/{file}", encoding="utf-8")
-        documents = loader.load()
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-        docs = text_splitter.split_documents(documents)
-        vector_store.add_documents(documents=docs)
+## test vector search by adding some documents
+#from langchain_community.document_loaders import TextLoader
+#from langchain_text_splitters import CharacterTextSplitter
+#
+## load all documents in the documents folder
+#for file in os.listdir("documents"):
+#    if file.endswith(".txt"):
+#        loader = TextLoader(f"documents/{file}", encoding="utf-8")
+#        documents = loader.load()
+#        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+#        docs = text_splitter.split_documents(documents)
+#        vector_store.add_documents(documents=docs)
 
 
 # Perform a similarity search
@@ -97,6 +102,34 @@ docs = vector_store.similarity_search(
     search_type="similarity",
 )
 print(docs[0].page_content)
+
+
+from langchain_community.vectorstores.azuresearch import AzureSearch
+from langchain.memory import VectorStoreRetrieverMemory
+from langchain.vectorstores.base import VectorStoreRetriever
+
+# Define the vector store retriever for memory
+memory_vector_store = AzureSearch(
+    azure_search_endpoint=vector_store_address,
+    azure_search_key=vector_store_password,
+    index_name="agent-memory",
+    embedding_function=embeddings.embed_query,
+)
+
+# Create a retriever from the vector store
+memory_retriever = VectorStoreRetriever(vectorstore=memory_vector_store)
+
+# Define the memory object using the retriever
+memory = VectorStoreRetrieverMemory(
+    retriever=memory_retriever,
+    memory_key="history",  # This key will be used when referencing memory in prompts
+    input_key="input",     # The input key to correlate user prompts
+    return_docs=False      # To avoid returning entire documents, useful for simplicity
+)
+
+memory.save_context({"input": "My favorite food is pizza"}, {"output": "that's good to know"})
+memory.save_context({"input": "My favorite sport is soccer"}, {"output": "..."})
+memory.save_context({"input": "I don't the Celtics"}, {"output": "ok"}) #
 
 llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
 
@@ -140,7 +173,7 @@ prompt = ChatPromptTemplate.from_messages(
 )
 
 agent = create_tool_calling_agent(llm, tools, prompt)
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=memory)
 
 
 @app.route("/agents/mailworker", methods=["POST"])
@@ -149,18 +182,26 @@ def invoke_agent():
         data = request.get_json()
         user_prompt = data.get("input")
         session_id = data.get("session_id")
+        
         if not user_prompt:
             return jsonify({"error": "Missing 'input' parameter in request body"}), 400
         if not session_id:
-            return (
-                jsonify({"error": "Missing 'session_id' parameter in request body"}),
-            )
+            return jsonify({"error": "Missing 'session_id' parameter in request body"}), 400
 
-        result = agent_executor.invoke({"input": user_prompt})
+        # Retrieve past relevant interactions for this prompt
+        last_user_prompt = memory.retriever.invoke(user_prompt)
+        
+        # Invoke the agent with memory context
+        result = agent_executor.invoke({"input": f"User Prompt: {user_prompt}\nHistory: \n{last_user_prompt}"})
+
+        # Save the interaction in memory
+        memory.save_context({"input": user_prompt, "session_id": session_id}, {"output": result})
+
         return jsonify({"result": result})
     except Exception as e:
         logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
+
 
 
 if __name__ == "__main__":

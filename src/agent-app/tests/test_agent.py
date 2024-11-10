@@ -9,7 +9,7 @@ class TestAgents(unittest.TestCase):
 
     def test_invoke_mailworker(self):
         input = """
-        What's a random number plus another random number?
+        What did I last ask about?
         """
         headers = {"Content-Type": "application/json"}
         # use fixed seed to ensure reproducibility for the session id - this will be used to identify the conversation for memory purposes
