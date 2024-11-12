@@ -23,9 +23,9 @@ foreach ($container in $containers) {
 }
 
 $envFilePath = "..\config\.env" # Adjust the path to your .env file
-
+$storageToken = az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv
 # Run containers with network aliases and environment variables from the .env file
-Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-agent-app -v $env:userprofile\.azure:/home/appuser/.azure -e AZURE_CONFIG_DIR=/home/appuser/.azure -p 5000:5000 -p 5678:5678 -e FLASK_ENV=development --network stockripper-network --network-alias stockripper-python-app.stockripper.internal --env-file $envFilePath stockripper-agent-app:latest"
+Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-agent-app -v $env:userprofile\.azure:/home/appuser/.azure -e AZURE_CONFIG_DIR=/home/appuser/.azure -p 5000:5000 -p 5678:5678 -e AZURE_STORAGE_TOKEN=$storageToken -e FLASK_ENV=development --network stockripper-network --network-alias stockripper-python-app.stockripper.internal --env-file $envFilePath stockripper-agent-app:latest"
 Start-Sleep -Seconds 2
 Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-fsharp-app -v $env:userprofile\.azure:/root/.azure -p 5001:5001 --network stockripper-network --network-alias stockripper-fsharp-app.stockripper.internal --env-file $envFilePath stockripper-fsharp-app:latest"
 Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-rust-app -v $env:userprofile\.azure:/root/.azure -p 5002:5002 --network stockripper-network --network-alias stockripper-rust-app.stockripper.internal --env-file $envFilePath stockripper-rust-app:latest"

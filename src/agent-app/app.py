@@ -39,9 +39,15 @@ from azure.search.documents.indexes.models import (
     SearchableField,
     SearchFieldDataType,
 )
-from azure.core.credentials import AzureKeyCredential
+from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.identity import DefaultAzureCredential, CredentialUnavailableError
-from azure.search.documents.models import QueryType
+import os
+from datetime import datetime, timedelta
+from azure.core.credentials import TokenCredential, AccessToken
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential, CredentialUnavailableError
+import logging
+
 
 
 # Load environment variables from a .env file.
@@ -59,6 +65,7 @@ TENANT_ID = os.getenv("TENANT_ID")
 REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
 REDIRECT_URI = "http://localhost:5000/getAToken"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AZURE_STORAGE_TOKEN = os.getenv("AZURE_STORAGE_TOKEN")
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
 AZURE_STORAGE_CONTAINER_NAME = os.getenv(
     "AZURE_STORAGE_CONTAINER_NAME", "default-container"
@@ -70,20 +77,46 @@ if not AZURE_STORAGE_ACCOUNT_URL:
 
 rag_index_name = "stockripper-documents"
 memory_index_name = "agent-memory"
-credential = DefaultAzureCredential()
 
 # add clients
+access_token = os.getenv("AZURE_STORAGE_TOKEN")
+logger = logging.getLogger(__name__)
+
+AZURE_STORAGE_ACCOUNT_URL = "https://stockripperstg.blob.core.windows.net"
+
+# bit of a hack for running containers locally but giving permissions to storage without using secrets
+class EnvironmentTokenCredential(TokenCredential):
+    def __init__(self, token):
+        self.token = token
+        self.expires_on = (datetime.now(timezone.utc) + timedelta(hours=24)).timestamp()  
+
+    def get_token(self, *scopes, **kwargs):
+        return AccessToken(self.token, self.expires_on)  
+
 try:
-    blob_service_client = BlobServiceClient(
-        account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential
-    )
-    logger.debug("BlobServiceClient successfully created.")
+    if AZURE_STORAGE_TOKEN:
+        token_credential = EnvironmentTokenCredential(token=AZURE_STORAGE_TOKEN)
+        blob_service_client = BlobServiceClient(
+            account_url=AZURE_STORAGE_ACCOUNT_URL,
+            credential=token_credential
+        )
+        logger.debug("BlobServiceClient successfully created with environment token.")
+    else:
+        logger.warning("AZURE_STORAGE_TOKEN not set. Falling back to DefaultAzureCredential.")
+        credential = DefaultAzureCredential()
+        blob_service_client = BlobServiceClient(
+            account_url=AZURE_STORAGE_ACCOUNT_URL,
+            credential=credential
+        )
+        logger.debug("BlobServiceClient successfully created with DefaultAzureCredential.")
+
 except CredentialUnavailableError as e:
     logger.error("Credential unavailable: %s", str(e))
     raise
 except Exception as e:
     logger.error("Failed to create BlobServiceClient: %s", str(e))
     raise
+
 
 index_client = SearchIndexClient(
     endpoint=COGNITIVE_SEARCH_URL,
@@ -347,7 +380,32 @@ def generate_random_number(min: int, max: int) -> int:
         max (int): The maximum value of the random number.
     """
     return random.randint(min, max)
+@tool("retrieve_wikipedia_article")
+def retrieve_wikipedia_article(topic: str) -> dict:
+    """
+    Retrieve a Wikipedia article based on a specified topic.
 
+    Args:
+        topic (str): The topic to search for in Wikipedia.
+
+    Returns:
+        dict: A dictionary containing the result message and the article content.
+    """
+    try:
+        logger.debug("Retrieving Wikipedia article for topic: %s", topic)
+        
+        # Initialize Wikipedia retriever
+        retriever = WikipediaRetriever()
+        docs = retriever.invoke(topic)
+        #print(docs[0].page_content[:400])
+        doc_result = "\n\n".join(doc.page_content for doc in docs)
+
+        logger.debug("Wikipedia article retrieved successfully for topic: %s", topic)
+        
+        return {"message": "Wikipedia article retrieved successfully", "article": doc_result}
+    except Exception as e:
+        logger.error("Error in retrieve_wikipedia_article: %s", str(e), exc_info=True)
+        return {"error": str(e)}
 
 # main agent functions
 def summarize_conversation(agent_executor, session_history, user_prompt, result):
@@ -445,6 +503,7 @@ def invoke_mailworker():
         add,
         subtract,
         generate_random_number,
+        retrieve_wikipedia_article
     ]
 
     llm_with_tools = llm.bind_tools(tools)
