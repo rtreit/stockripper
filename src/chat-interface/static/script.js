@@ -46,12 +46,16 @@ function sendMessage() {
     .then(response => response.json())
     .then(data => {
         console.log("Agent Response:", data);
-
-        const agentMessage = data.result && data.result.output ? data.result.output : JSON.stringify(data);
-
+    
+        // Safely access `output`, or fallback to `data.result` or `data` as needed
+        const agentMessage = data.result?.output || data.result || JSON.stringify(data);
+    
+        // Create and format the bot message for display
         const botMessage = document.createElement("p");
         botMessage.innerHTML = marked.parse(agentMessage);
         botMessage.classList.add("fade-in");
+    
+        // Append message to the chat box and auto-scroll
         chatBox.appendChild(botMessage);
         chatBox.scrollTop = chatBox.scrollHeight;
     })
