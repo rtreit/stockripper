@@ -1,17 +1,28 @@
-# Use an official Python runtime as a base image
-FROM python:3.9-slim
+FROM python:3.13-slim
 
-# Set the working directory
+EXPOSE 5000
+EXPOSE 5678
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc build-essential curl && \
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN adduser -u 5678 --disabled-password --gecos "" appuser && \
+    mkdir -p /home/appuser/.azure && \
+    chown -R appuser:appuser /home/appuser/.azure
+
+COPY requirements.txt .
+RUN python -m pip install -r requirements.txt
+
 WORKDIR /app
-
-# Copy the current directory contents into the container at /app
 COPY . /app
 
-# Install any dependencies
-RUN pip install -r requirements.txt
+RUN chown -R appuser /app
+USER appuser
 
-# Expose port 5001 for the chat interface
-EXPOSE 5004
-
-# Start the Flask app
 CMD ["python", "app.py"]

@@ -431,61 +431,60 @@ def call_agent(agent_executor, user_prompt, session_id):
     prune_old_conversations(memory_vector_store, session_id)
     return result
 
-llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
-tools = [
-    send_email,
-    save_to_blob,
-    list_blobs,
-    list_containers,
-    multiply,
-    divide,
-    add,
-    subtract,
-    generate_random_number,
-]
-
-llm_with_tools = llm.bind_tools(tools)
-
-system_message = SystemMessagePromptTemplate(
-    prompt=PromptTemplate(
-        input_variables=[],
-        input_types={},
-        partial_variables={},
-        template="""
-        You are StockRipper, an expert stock trading and investing agent. 
-        Your job is to help maximize the user's investment returns by providing stock market insights, analysis, and recommendations.
-        You can also execute trades, manage portfolios, and provide real-time updates on stock prices and market trends.
-        You have access to a set of tools that allow you to perform various tasks.",
-        """
-    ),
-    additional_kwargs={},
-)
-
-human_message = HumanMessagePromptTemplate(
-    prompt=PromptTemplate(
-        input_variables=["input"],
-        input_types={},
-        partial_variables={},
-        template="{input}",
-    ),
-    additional_kwargs={},
-)
-
-prompt = ChatPromptTemplate.from_messages(
-    [
-        system_message,
-        MessagesPlaceholder(variable_name="chat_history", optional=True),
-        human_message,
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ]
-)
-
-agent = create_tool_calling_agent(llm, tools, prompt)
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=memory)
-
 
 @app.route("/agents/mailworker", methods=["POST"])
-def invoke_agent():
+def invoke_mailworker():
+    llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
+    tools = [
+        send_email,
+        save_to_blob,
+        list_blobs,
+        list_containers,
+        multiply,
+        divide,
+        add,
+        subtract,
+        generate_random_number,
+    ]
+
+    llm_with_tools = llm.bind_tools(tools)
+
+    system_message = SystemMessagePromptTemplate(
+        prompt=PromptTemplate(
+            input_variables=[],
+            input_types={},
+            partial_variables={},
+            template="""
+            You are StockRipper, an expert stock trading and investing agent. 
+            Your job is to help maximize the user's investment returns by providing stock market insights, analysis, and recommendations.
+            You can also execute trades, manage portfolios, and provide real-time updates on stock prices and market trends.
+            You have access to a set of tools that allow you to perform various tasks.",
+            """
+        ),
+        additional_kwargs={},
+    )
+
+    human_message = HumanMessagePromptTemplate(
+        prompt=PromptTemplate(
+            input_variables=["input"],
+            input_types={},
+            partial_variables={},
+            template="{input}",
+        ),
+        additional_kwargs={},
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            system_message,
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            human_message,
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ]
+    )
+
+    agent = create_tool_calling_agent(llm, tools, prompt)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=memory)    
     try:
         data = request.get_json()
         user_prompt = data.get("input")
