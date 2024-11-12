@@ -47,6 +47,8 @@ from azure.core.credentials import TokenCredential, AccessToken
 from azure.storage.blob import BlobServiceClient
 from azure.identity import DefaultAzureCredential, CredentialUnavailableError
 import logging
+from langchain_community.tools.bing_search import BingSearchResults
+from langchain_community.utilities import BingSearchAPIWrapper
 
 
 
@@ -407,6 +409,38 @@ def retrieve_wikipedia_article(topic: str) -> dict:
         logger.error("Error in retrieve_wikipedia_article: %s", str(e), exc_info=True)
         return {"error": str(e)}
 
+api_wrapper = BingSearchAPIWrapper()
+bing_tool = BingSearchResults(api_wrapper=api_wrapper)
+
+@tool("retrieve_bing_search_results")
+def retrieve_bing_search_results(query: str) -> dict:
+    """
+    Retrieve Bing search results based on a specified query.
+
+    Args:
+        query (str): The search query to retrieve results for.
+
+    Returns:
+        dict: A dictionary containing the result message and the search results.
+    """
+    try:
+        logger.debug("Retrieving Bing search results for query: %s", query)
+        
+        # Perform the search and parse the response
+        response = bing_tool.invoke(query)
+        response = json.loads(response.replace("'", '"'))  # Ensure JSON formatting
+        
+        # Process and format results
+        results = "\n\n".join(item['snippet'] for item in response if 'snippet' in item)
+        
+        logger.debug("Bing search results retrieved successfully for query: %s", query)
+        
+        return {"message": "Bing search results retrieved successfully", "results": results}
+    except Exception as e:
+        logger.error("Error in retrieve_bing_search_results: %s", str(e), exc_info=True)
+        return {"error": str(e)}
+
+
 # main agent functions
 def summarize_conversation(agent_executor, session_history, user_prompt, result):
     # Define the enhanced summarization prompt
@@ -503,7 +537,8 @@ def invoke_mailworker():
         add,
         subtract,
         generate_random_number,
-        retrieve_wikipedia_article
+        retrieve_wikipedia_article,
+        retrieve_bing_search_results
     ]
 
     llm_with_tools = llm.bind_tools(tools)
