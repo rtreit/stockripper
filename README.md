@@ -70,7 +70,3 @@ To start StockRipper locally from the project root, use:
 ```powershell
 .\run_locally.ps1
 ```
-
----
-
-This should provide a clearer, more structured overview and make it easy to understand the setup and inter-container communication.
