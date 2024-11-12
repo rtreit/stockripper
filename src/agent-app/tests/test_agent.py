@@ -9,7 +9,7 @@ class TestAgents(unittest.TestCase):
 
     def test_invoke_mailworker(self):
         input = """
-        What did I last ask about?
+        How many containers are there?
         """
         headers = {"Content-Type": "application/json"}
         # use fixed seed to ensure reproducibility for the session id - this will be used to identify the conversation for memory purposes

@@ -1,33 +1,48 @@
 from flask import Flask, request, jsonify
 import os
 import logging
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.tools import tool
-import requests
 import random
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain.prompts import (
+import json
+from dotenv import load_dotenv
+from datetime import datetime, timezone
+import requests
+
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
     MessagesPlaceholder,
     PromptTemplate,
 )
+from langchain_core.tools import tool
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.prompts import ChatPromptTemplate
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_community.vectorstores.azuresearch import AzureSearch
+from langchain_community.retrievers import WikipediaRetriever, AzureAISearchRetriever
+from langchain.memory import (
+    VectorStoreRetrieverMemory,
+    ConversationBufferMemory,
+    ConversationBufferWindowMemory,
+    ConversationSummaryMemory,
+)
+from langchain.vectorstores.base import VectorStoreRetriever
+from langchain_core.documents import Document
+
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import (
+    SimpleField,
+    SearchIndex,
+    SearchableField,
+    SearchFieldDataType,
+)
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential, CredentialUnavailableError
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain_community.vectorstores.azuresearch import AzureSearch
-from langchain_openai import AzureOpenAIEmbeddings, OpenAIEmbeddings
-from langchain_community.retrievers import WikipediaRetriever
+from azure.search.documents.models import QueryType
 
-retriever = WikipediaRetriever()
-docs = retriever.invoke("TOKYO GHOUL")
-print(docs[0].page_content[:400])
 
 # Load environment variables from a .env file.
 load_dotenv()
@@ -53,8 +68,11 @@ if not AZURE_STORAGE_ACCOUNT_URL:
         "AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL."
     )
 
+rag_index_name = "stockripper-documents"
+memory_index_name = "agent-memory"
 credential = DefaultAzureCredential()
 
+# add clients
 try:
     blob_service_client = BlobServiceClient(
         account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential
@@ -67,82 +85,68 @@ except Exception as e:
     logger.error("Failed to create BlobServiceClient: %s", str(e))
     raise
 
+index_client = SearchIndexClient(
+    endpoint=COGNITIVE_SEARCH_URL,
+    credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
+)
 
+memory_search_client = SearchClient(
+        endpoint=COGNITIVE_SEARCH_URL,
+        index_name=memory_index_name,
+        credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
+    )
+
+rag_search_client = SearchClient(
+    endpoint=COGNITIVE_SEARCH_URL,
+    index_name=rag_index_name,
+    credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
+)
 
 app = Flask(__name__)
 
-
-vector_store_address: str = COGNITIVE_SEARCH_URL
-vector_store_password: str = COGNITIVE_SEARCH_ADMIN_KEY
-
 embeddings_model: str = "text-embedding-ada-002"
-
 openai_api_version: str = "2023-05-15"
-# Option 1: Use OpenAIEmbeddings with OpenAI account
 embeddings: OpenAIEmbeddings = OpenAIEmbeddings(
     openai_api_key=OPENAI_API_KEY, openai_api_version=openai_api_version, model=embeddings_model
 )
 
-index_name: str = "stockripper-documents"
-vector_store: AzureSearch = AzureSearch(
-    azure_search_endpoint=vector_store_address,
-    azure_search_key=vector_store_password,
-    index_name=index_name,
+# RAG 
+rag_vector_store: AzureSearch = AzureSearch(
+    azure_search_endpoint=COGNITIVE_SEARCH_URL,
+    azure_search_key=COGNITIVE_SEARCH_ADMIN_KEY,
+    index_name=rag_index_name,
     embedding_function=embeddings.embed_query,
 )
 
-## test vector search by adding some documents
-#from langchain_community.document_loaders import TextLoader
-#from langchain_text_splitters import CharacterTextSplitter
-#
-## load all documents in the documents folder
-#for file in os.listdir("documents"):
-#    if file.endswith(".txt"):
-#        loader = TextLoader(f"documents/{file}", encoding="utf-8")
-#        documents = loader.load()
-#        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-#        docs = text_splitter.split_documents(documents)
-#        vector_store.add_documents(documents=docs)
-
-
-# Perform a similarity search
-#docs = vector_store.similarity_search(
-#    query="What is an aggressive investment strategy?",
-#    k=3,
-#    search_type="similarity",
-#)
-#print(docs[0].page_content)
-#
-
-from langchain_community.vectorstores.azuresearch import AzureSearch
-from langchain.memory import VectorStoreRetrieverMemory
-from langchain.vectorstores.base import VectorStoreRetriever
-
-# Define the vector store retriever for memory
-memory_vector_store = AzureSearch(
-    azure_search_endpoint=vector_store_address,
-    azure_search_key=vector_store_password,
-    index_name="agent-memory",
+# Memory 
+memory_vector_store: AzureSearch = AzureSearch(
+    azure_search_endpoint=COGNITIVE_SEARCH_URL,
+    azure_search_key=COGNITIVE_SEARCH_ADMIN_KEY,
+    index_name=memory_index_name,
     embedding_function=embeddings.embed_query,
 )
 
-# Create a retriever from the vector store
-memory_retriever = VectorStoreRetriever(vectorstore=memory_vector_store)
+def add_to_memory(vector_store: AzureSearch, conversation: Document, session_id: str):
+    id = vector_store.add_documents(documents=[conversation], index_name=memory_index_name)[0]
+    update_document = {
+        "id": id,
+        "session_id": session_id
+    }
+    memory_search_client.merge_documents([update_document])
 
-# Define the memory object using the retriever
+# we'll need memory we can pass to the model
+memory_retriever = VectorStoreRetriever(
+    vectorstore=memory_vector_store
+)
+
 memory = VectorStoreRetrieverMemory(
     retriever=memory_retriever,
-    memory_key="history",  # This key will be used when referencing memory in prompts
-    input_key="input",     # The input key to correlate user prompts
-    return_docs=False      # To avoid returning entire documents, useful for simplicity
+    memory_key="history",  
+    input_key="input",     
+    return_docs=False
 )
 
-memory.save_context({"input": "My favorite food is pizza"}, {"output": "that's good to know"})
-memory.save_context({"input": "My favorite sport is soccer"}, {"output": "..."})
-memory.save_context({"input": "I don't the Celtics"}, {"output": "ok"}) #
-
-llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
-
+# add tools
 def refresh_auth_token():
     """
     Refresh the Microsoft Graph API authentication token using the refresh token.
@@ -164,7 +168,6 @@ def refresh_auth_token():
         return tokens.get("access_token")
     else:
         raise Exception(f"Failed to refresh token: {response.text}")
-
 
 @tool("send_email")
 def send_email(recipient: str, subject: str, body: str) -> dict:
@@ -346,6 +349,88 @@ def generate_random_number(min: int, max: int) -> int:
     return random.randint(min, max)
 
 
+# main agent functions
+def summarize_conversation(agent_executor, session_history, user_prompt, result):
+    # Define the enhanced summarization prompt
+    summarization_prompt = f"""
+    You are maintaining a summary of the ongoing conversation to serve as a working memory. 
+    This summary should include all key facts, action results, entities, and values generated during the conversation, in a way that will allow you to recall specific information in the future if asked. 
+    Examples:
+    
+    - Any websites, links, or URLs visited or discussed
+    - Unique values or numbers you have provided, like random numbers or IDs
+    - Key decisions, instructions, or choices made by the user or agent
+    - Names, dates, and any other specific entities referenced
+    - Similar kinds of information
+    
+    Format the summary to be as concise as possible while retaining these essential details. 
+    Do not include filler or repetitive information. 
+    Your goal is to create a memory of important facts, allowing you to answer questions like "What website did you previously browse?" or "What was the last number you provided?" without needing to review the entire conversation history.
+
+    Session History:
+    {session_history}
+
+    Latest Interaction:
+    User: {user_prompt}
+    Agent: {result['output']}
+    
+    Provide a concise yet detailed summary of the conversation so far, focusing on capturing key information in a way that you can reference it easily.
+    """
+
+    # Invoke the agent to generate the summary
+    summary_result = agent_executor.invoke({"input": summarization_prompt})
+    summary = summary_result.get("output", "Summary could not be generated.")
+    return summary
+
+
+
+def store_summary(vector_store, session_id, summary):
+    current_time_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    summary_doc = Document(
+        page_content=summary,
+        metadata={
+            "start_timestamp": current_time_utc,
+            "session_id": session_id,
+            "summary_version": "latest"
+        }
+    )
+    add_to_memory(vector_store, summary_doc, session_id)
+    print("Summary stored successfully.")
+
+def prune_old_conversations(vector_store, session_id, keep_latest=1):
+    filter_expression = f"session_id eq '{session_id}'"
+    results = list(memory_search_client.search(search_text="", filter=filter_expression))
+    for result in results:
+        result["metadata"] = json.loads(result["metadata"])  
+    results.sort(
+        key=lambda x: datetime.strptime(x["metadata"]["start_timestamp"], "%Y-%m-%dT%H:%M:%SZ"),
+        reverse=True
+    )
+
+    old_docs_to_delete = [{"id": doc["id"]} for doc in results[keep_latest:]]
+    if old_docs_to_delete:
+        memory_search_client.delete_documents(documents=old_docs_to_delete)
+        print(f"Deleted {len(old_docs_to_delete)} old documents for session {session_id}.")
+    else:
+        print("No old documents to delete.")
+
+
+def call_agent(agent_executor, user_prompt, session_id):
+    filter_expression = f"session_id eq '{session_id}'"
+    session_history = list(memory_search_client.search(search_text="", filter=filter_expression))
+    print(f"Found {len(session_history)} documents for session {session_id}.")
+    if len(session_history) == 0:
+        session_history_content = ""
+    else:
+        session_history_content = "" 
+        for doc in session_history:
+            session_history_content += doc["content"] + "\n"
+    result = agent_executor.invoke({"input": f"User Prompt: {user_prompt}\nHistory: \n{session_history_content}"})
+    summary = summarize_conversation(agent_executor, session_history_content, user_prompt, result)
+    store_summary(memory_vector_store, session_id, summary)
+    prune_old_conversations(memory_vector_store, session_id)
+    return result
+
 llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
 tools = [
     send_email,
@@ -358,7 +443,6 @@ tools = [
     subtract,
     generate_random_number,
 ]
-llm_with_tools = llm.bind_tools(tools)
 
 llm_with_tools = llm.bind_tools(tools)
 
@@ -401,27 +485,21 @@ def invoke_agent():
         data = request.get_json()
         user_prompt = data.get("input")
         session_id = data.get("session_id")
-        
+
         if not user_prompt:
             return jsonify({"error": "Missing 'input' parameter in request body"}), 400
         if not session_id:
-            return jsonify({"error": "Missing 'session_id' parameter in request body"}), 400
+            return (
+                jsonify({"error": "Missing 'session_id' parameter in request body"}),
+                400,
+            )
 
-        # Retrieve past relevant interactions for this prompt
-        last_user_prompt = memory.retriever.invoke(user_prompt)
-        
         # Invoke the agent with memory context
-        result = agent_executor.invoke({"input": f"User Prompt: {user_prompt}\nHistory: \n{last_user_prompt}"})
-
-        # Save the interaction in memory
-        memory.save_context({"input": user_prompt, "session_id": session_id}, {"output": result})
-
+        result = call_agent(agent_executor, user_prompt, session_id)
         return jsonify({"result": result})
     except Exception as e:
         logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
-
-
 
 if __name__ == "__main__":
     # Run the Flask app on port 5000
