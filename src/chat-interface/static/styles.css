@@ -1,0 +1,101 @@
+/* Set the background image, if desired */
+body {
+    background: url('/static/images/image.png') no-repeat center center fixed;
+    background-size: cover;
+    font-family: 'Courier New', monospace; /* Console-style font */
+    color: #33ff33; /* Terminal green text color */
+}
+
+/* Dark overlay for readability */
+body::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85); /* Dark overlay to enhance readability */
+    z-index: -1;
+}
+
+/* Chat title with a green glow effect */
+.chat-title {
+    font-size: 2rem;
+    color: #33ff33;
+    text-align: center;
+    text-shadow: 0px 0px 10px #33ff33;
+    margin-bottom: 20px;
+}
+
+/* General chat box styling remains the same */
+.chat-box {
+    background-color: #000000; /* Pure black background */
+    border: 1px solid #33ff33; /* Green border for terminal look */
+    border-radius: 8px;
+    box-shadow: 0px 0px 15px rgba(51, 255, 51, 0.5);
+    padding: 10px;
+    color: #33ff33; /* Terminal green for text */
+    font-family: 'Courier New', monospace;
+}
+
+/* New styling for markdown messages within chat */
+.chat-box .markdown-content {
+    background-color: #1a1a1a; /* Dark gray background for markdown */
+    padding: 8px;
+    border-radius: 5px;
+    color: #33ff33; /* Terminal green text color */
+    font-family: 'Courier New', monospace;
+    margin-bottom: 10px;
+}
+
+/* Optional: Add padding to code blocks within markdown for readability */
+.chat-box .markdown-content pre {
+    background-color: #333333; /* Slightly darker gray for code blocks */
+    padding: 8px;
+    border-radius: 5px;
+    color: #33ff33;
+    overflow-x: auto; /* Ensures code blocks are scrollable if too wide */
+}
+
+/* Additional styling to prevent unwanted color bleed */
+.chat-box .markdown-content h1, .chat-box .markdown-content h2,
+.chat-box .markdown-content h3, .chat-box .markdown-content p {
+    color: #33ff33; /* Ensuring headers and paragraphs stay in terminal green */
+}
+
+
+/* Input field styling to match terminal aesthetic */
+.chat-input {
+    background-color: #000000;
+    color: #33ff33;
+    border: 1px solid #33ff33;
+    border-radius: 5px;
+    font-family: 'Courier New', monospace;
+}
+
+/* Button styling with hover effect for terminal green */
+.button.is-primary {
+    background-color: #33ff33;
+    color: #000000;
+    border: none;
+    font-family: 'Courier New', monospace;
+    box-shadow: 0px 0px 8px rgba(51, 255, 51, 0.5);
+}
+
+.button.is-primary:hover {
+    background-color: #29cc29; /* Slightly darker green on hover */
+    box-shadow: 0px 0px 12px rgba(51, 255, 51, 0.7);
+    transform: scale(1.05);
+    transition: all 0.2s ease-in-out;
+}
+
+/* Smooth scrolling effect for chat messages */
+.chat-box p {
+    transition: opacity 0.5s ease-in-out;
+    color: #33ff33; /* Terminal green for messages */
+}
+
+/* Fade-in effect for new messages */
+.chat-box p.fade-in {
+    opacity: 1;
+}

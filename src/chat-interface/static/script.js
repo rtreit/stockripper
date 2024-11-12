@@ -25,6 +25,7 @@ function sendMessage() {
     const chatBox = document.getElementById("chat-box");
     const userMessage = document.createElement("p");
     userMessage.textContent = `You: ${userInput}`;
+    userMessage.classList.add("fade-in");
     chatBox.appendChild(userMessage);
 
     // Clear input field
@@ -39,24 +40,31 @@ function sendMessage() {
         body: JSON.stringify({
             agent_name: "mailworker",
             input: userInput,
-            session_id: getSessionId() // Use the unique session ID for each browser session
+            session_id: getSessionId()
         })
     })
     .then(response => response.json())
     .then(data => {
-        console.log("Agent Response:", data); // Log the entire response object for inspection
+        console.log("Agent Response:", data);
 
-        // Extract the 'output' from the 'result' object
         const agentMessage = data.result && data.result.output ? data.result.output : JSON.stringify(data);
 
-        // Render Markdown as HTML
         const botMessage = document.createElement("p");
-        botMessage.innerHTML = marked.parse(agentMessage); // Use marked to convert Markdown to HTML
+        botMessage.innerHTML = marked.parse(agentMessage);
+        botMessage.classList.add("fade-in");
         chatBox.appendChild(botMessage);
-        chatBox.scrollTop = chatBox.scrollHeight; // Scroll to bottom
+        chatBox.scrollTop = chatBox.scrollHeight;
     })
     .catch(error => {
         console.error("Error:", error);
         alert("An error occurred while sending the message. Please check the console for details.");
     });
 }
+
+// Event listener to support Enter key for sending messages
+document.getElementById("user-input").addEventListener("keypress", function (event) {
+    if (event.key === "Enter") {
+        event.preventDefault(); // Prevents form submission if the input is in a form
+        sendMessage();
+    }
+});

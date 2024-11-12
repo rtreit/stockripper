@@ -9,7 +9,7 @@ if (-not $networkExists) {
 }
 
 # Define container names
-$containers = @("stockripper-agent-app", "stockripper-fsharp-app")
+$containers = @("stockripper-agent-app", "stockripper-fsharp-app", "stockripper-rust-app", "stockripper-chat-interface")
 
 # Stop and remove existing containers if they are running
 foreach ($container in $containers) {
@@ -29,5 +29,5 @@ Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-agent-app
 Start-Sleep -Seconds 2
 Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-fsharp-app -v ~/.azure:/root/.azure -p 5001:5001 --network stockripper-network --network-alias stockripper-fsharp-app.stockripper.internal --env-file $envFilePath stockripper-fsharp-app:latest"
 Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-rust-app -v ~/.azure:/root/.azure -p 5002:5002 --network stockripper-network --network-alias stockripper-rust-app.stockripper.internal --env-file $envFilePath stockripper-rust-app:latest"
-
+Start-Process -FilePath "docker" -ArgumentList "run --name stockripper-chat-interface -v ~/.azure:/root/.azure -p 5004:5004 --network stockripper-network --network-alias stockripper-chat-interface.stockripper.internal --env-file $envFilePath -e AGENT_SERVICE_URL=http://stockripper-python-app.stockripper.internal:5000/agents stockripper-chat-interface:latest"
 

@@ -1,23 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Chat with Agent</title>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.3/css/bulma.min.css">
-        <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script> <!-- Add this line -->
-    </head>
-    
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat with Stockripper</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.3/css/bulma.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+
 <body>
     <section class="section">
         <div class="container">
-            <h1 class="title">Chat with Agent</h1>
-            <div id="chat-box" class="box" style="height: 400px; overflow-y: scroll;"></div>
-            <input id="user-input" class="input" type="text" placeholder="Type your message...">
+            <h1 class="title chat-title">Chat with Stockripper</h1>
+            <div id="chat-box" class="box chat-box" style="height: 400px; overflow-y: scroll;"></div>
+            <input id="user-input" class="input chat-input" type="text" placeholder="Type your message...">
             <button id="send-button" class="button is-primary" onclick="sendMessage()">Send</button>
         </div>
     </section>
-    <!-- Correctly reference script.js using Flask's url_for -->
+
+    <!-- Reference script.js using Flask's url_for -->
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
