@@ -27,28 +27,30 @@ body::before {
     margin-bottom: 20px;
 }
 
-/* General chat box styling remains the same */
 .chat-box {
-    background-color: #000000; /* Pure black background */
-    border: 1px solid #33ff33; /* Green border for terminal look */
+    overflow-y: hidden; /* This hides the scrollbar */
+    max-height: 500px; /* Set a maximum height */
+    background-color: #000000;
+    border: 1px solid #33ff33;
     border-radius: 8px;
     box-shadow: 0px 0px 15px rgba(51, 255, 51, 0.5);
     padding: 10px;
-    color: #33ff33; /* Terminal green for text */
+    color: #33ff33;
     font-family: 'Courier New', monospace;
 }
 
-/* New styling for markdown messages within chat */
-.chat-box .markdown-content {
-    background-color: #1a1a1a; /* Dark gray background for markdown */
-    padding: 8px;
-    border-radius: 5px;
-    color: #33ff33; /* Terminal green text color */
-    font-family: 'Courier New', monospace;
-    margin-bottom: 10px;
+/* This will hide scrollbars while allowing scrolling in WebKit browsers */
+.chat-box::-webkit-scrollbar {
+    display: none;
 }
 
-/* Optional: Add padding to code blocks within markdown for readability */
+.chat-box .markdown-content code {
+    background-color: #333333; /* Dark gray background for inline code */
+    color: #33ff33;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
 .chat-box .markdown-content pre {
     background-color: #333333; /* Slightly darker gray for code blocks */
     padding: 8px;
@@ -56,6 +58,16 @@ body::before {
     color: #33ff33;
     overflow-x: auto; /* Ensures code blocks are scrollable if too wide */
 }
+
+.chat-box .markdown-content h1, 
+.chat-box .markdown-content h2,
+.chat-box .markdown-content h3,
+.chat-box .markdown-content p,
+.chat-box .markdown-content li {
+    color: #33ff33; /* Terminal green */
+    font-family: 'Courier New', monospace;
+}
+
 
 /* Additional styling to prevent unwanted color bleed */
 .chat-box .markdown-content h1, .chat-box .markdown-content h2,

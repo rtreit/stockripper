@@ -51,7 +51,8 @@ function sendMessage() {
         const agentMessage = data.result?.output || data.result || JSON.stringify(data);
     
         // Create and format the bot message for display
-        const botMessage = document.createElement("p");
+        const botMessage = document.createElement("div"); // Use div for markdown container
+        botMessage.classList.add("markdown-content"); // Add markdown content class
         botMessage.innerHTML = marked.parse(agentMessage);
         botMessage.classList.add("fade-in");
     
@@ -59,6 +60,7 @@ function sendMessage() {
         chatBox.appendChild(botMessage);
         chatBox.scrollTop = chatBox.scrollHeight;
     })
+    
     .catch(error => {
         console.error("Error:", error);
         alert("An error occurred while sending the message. Please check the console for details.");
@@ -70,5 +72,29 @@ document.getElementById("user-input").addEventListener("keypress", function (eve
     if (event.key === "Enter") {
         event.preventDefault(); // Prevents form submission if the input is in a form
         sendMessage();
+    }
+});
+
+document.addEventListener('DOMContentLoaded', function () {
+    // Select the chat box element
+    const chatBox = document.querySelector('.chat-box');
+
+    // Function to scroll to the bottom
+    function scrollToBottom() {
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // Call this function initially to scroll to the bottom when the page loads
+    scrollToBottom();
+
+    // Optional: Use MutationObserver to auto-scroll whenever content changes
+    const observer = new MutationObserver(scrollToBottom);
+    observer.observe(chatBox, { childList: true });
+
+    // You can also call scrollToBottom() after manually appending messages, if applicable
+    // For example, if you have a function that appends new messages:
+    function appendMessage(message) {
+        chatBox.innerHTML += `<p>${message}</p>`; // Append new message
+        scrollToBottom(); // Scroll to bottom after adding a new message
     }
 });
