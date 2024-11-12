@@ -1,0 +1,25 @@
+The Intelligent Investor by Benjamin Graham, first published in 1949, is a widely acclaimed book on value investing. The book provides strategies on how to successfully use value investing in the stock market. Historically, the book has been one of the most popular books on investing and Graham's legacy remains.
+
+
+== Background and history ==
+The Intelligent Investor is based on value investing, an investment approach Graham began teaching at Columbia Business School in 1928 and subsequently refined with David Dodd. This sentiment was echoed by other Graham disciples such as Irving Kahn and Walter Schloss. Warren Buffett read the book at age 20 and began using the value investing taught by Graham to build his own investment portfolio.
+The Intelligent Investor also marks a significant deviation in stock selection from Graham's earlier works, such as Security Analysis. Which is, instead of extensive analysis on an individual company, just apply simple earning criteria and buy a group of companies. He explained the change as:
+
+The thing that I have been emphasizing in my own work for the last few years has been the group approach. To try to buy groups of stocks that meet some simple criterion for being undervalued -- regardless of the industry and with very little attention to the individual company... I found the results were very good for 50 years. They certainly did twice as well as the Dow Jones. And so my enthusiasm has been transferred from the selective to the group approach. What I want is an earnings ratio twice as good as the bond interest ratio typically for most years. One can also apply a dividend criterion or an asset value criterion and get good results. My  research indicates the best results come from simple earnings criterions.
+
+
+== Analysis ==
+
+
+=== Value investing ===
+Graham’s main investment approach outlined in The Intelligent Investor is that of value investing. Value investing is an investment strategy that targets undervalued stocks of companies that have the capabilities as businesses to perform well in the long run. Value investing is not concerned with short term trends in the market or daily movements of stocks. This is because value investing strategies believe the market overreacts to price changes in the short term, without taking into account a company’s fundamentals for long-term growth. In its most basic terms, value investing is based on the premise that if you know the true value of a stock, then you can save lots of money if you can buy that stock on sale.
+
+
+=== Mr. Market ===
+
+One of Graham's important allegories is that of Mr. Market, meant to personify the irrationality and group-think of the stock market. Mr. Market is an obliging fellow who turns up every day at the shareholder's door offering to buy or sell his shares at a different price. Often, the price quoted by Mr. Market seems plausible, but sometimes it is ridiculous. The investor is free to either agree with his quoted price and trade with him, or ignore him completely. Mr. Market doesn't mind this, and will be back the following day to quote another price.
+The point of this anecdote is that the investor should not regard the whims of Mr. Market as a determining factor in the value of the shares the investor owns. He should profit from market folly rather than participate in it. A common fallacy in the market is that investors are reasonable and homogenous, but Mr. Market serves to show that this is not the case. The investor is advised to concentrate on the real life performance of his companies and receiving dividends, rather than be too concerned with Mr. Market's often irrational behavior.
+
+
+=== Determining value ===
+In The Intelligent Investor, Graham explains the importance of determining value when investing. In order to invest for value successfully and avoid participating in short-term market booms and busts, determining the value of companies is essential. To determine value, investors use fundamental analysis. Mathema

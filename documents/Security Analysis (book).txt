@@ -1,0 +1,49 @@
+Security Analysis is a book written by Benjamin Graham and David Dodd. Both authors were professors at the Columbia Business School. The book laid the intellectual foundation for value investing. The first edition was published in 1934 at the start of the Great Depression. Graham and Dodd coined the term margin of safety in the book.
+
+
+== History ==
+Security Analysis was published by McGraw-Hill, and written by David Dodd and Benjamin Graham in the early 1930s, when both authors taught at Columbia University's business school. Writes The New York Times, "it was intended as a common-sense guide for investors but turned out to be a thick textbook that went through five editions and sold more than 250,000 copies [by 1988]." Economist Irving Kahn was one of Graham's teaching assistants at Columbia University in the 1930s, and made research contributions to Graham's texts for Security Analysis.
+
+
+== Content ==
+
+
+=== First edition ===
+The work was first published in 1934, following unprecedented losses on Wall Street.  In summing up lessons learned, Graham and Dodd scolded Wall Street for its focus on a company's reported earnings per share, and were particularly harsh on the favored "earnings trends."  They encouraged investors to take an entirely different approach by gauging the rough value of the operating business that lay behind the security.  Graham and Dodd enumerated multiple actual examples of the market's tendency to irrationally under-value certain out-of-favor securities.  They saw this tendency as an opportunity for the savvy.
+In Security Analysis, Graham proposed a clear definition of investment that was distinguished from what he deemed speculation. It read, "An investment operation is one which, upon thorough analysis, promises safety of principal and an adequate return. Operations not meeting these requirements are speculative."
+A number of financial terms were coined in the book. For example, Graham and Dodd coined the term margin of safety in Security Analysis. It is not known when the Period of financial distress phrase was first used or by whom.  However, it or phrases closely equivalent were almost certainly first used in connection with the theory of value investing as developed initially by Graham in Security Analysis in 1934.
+
+
+=== Later editions ===
+
+Starting in 1962, Benjamin Graham describes in the fourth and subsequent editions a heuristic he used to value stocks first stated in his 1949 book, The Intelligent Investor, as follows:
+
+  
+    
+      
+        V
+        =
+        
+          EARNINGS
+        
+        ×
+        (
+        8.5
+        +
+        2
+        g
+        )
+      
+    
+    {\displaystyle V={\text{EARNINGS}}\times (8.5+2g)}
+  
+
+V = Intrinsic Value
+EARNINGS = Trailing Twelve Months Earnings
+8.5 = P/E base for a no-growth company
+g = reasonably expected 7 to 10 year growth rate
+Graham’s formula took no account of prevailing interest rates.
+
+
+== Market application ==
+The book represents the genesis of financial analysis and corporate finance.  However, by the 1970s, Graham stopped advocating a careful use of the techniques described in his text for security analysts in selecting individual stock investments, citing that "in the light of the enormous amount of research now being carried on, I doubt whether in most cases such extensive efforts will generate sufficiently superior selections to justify their cost. To that very limited extent I'm on the side of the "efficient market" school of thought now generally accepted by the professors."  Graham stated that the average manager of institutional funds could not obtain better results than stock market indexes, since "that would mean that the stock market experts as a whole could beat themselves — a logical contradiction."  Regarding portfolio formation, Graham suggested that investors use "a highly simplified" approach that applies one or two criteria to security prices "to assure that full value is present," relying on the portfolio as a whol
