@@ -29,6 +29,30 @@ from langchain.memory import (
 )
 from langchain.vectorstores.base import VectorStoreRetriever
 from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
+
+def call_agent(agent_executor, user_prompt, session_id):
+    filter_expression = f"session_id eq '{session_id}'"
+    session_history = list(memory_search_client.search(search_text="", filter=filter_expression))
+    history_messages = []
+    
+    # Ensure correct instantiation of BaseMessage for each message
+    for doc in session_history:
+        message_content = doc["content"]
+        message_role = doc.get("role", "user")
+        history_messages.append(BaseMessage(content=message_content, role=message_role))
+    
+    result = agent_executor.invoke({
+        "input": f"User Prompt: {user_prompt}",
+        "history": history_messages,
+        "context": []
+    })
+    
+    summary = summarize_conversation(agent_executor, history_messages, user_prompt, result)
+    store_summary(memory_vector_store, session_id, summary)
+    prune_old_conversations(memory_vector_store, session_id)
+    
+    return result
 
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
@@ -55,7 +79,6 @@ from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
 from langchain_community.tools.playwright.utils import (
     create_async_playwright_browser, create_sync_playwright_browser
 )
-
 
 
 # Load environment variables from a .env file.
@@ -452,29 +475,36 @@ def retrieve_duckduckgo_search_results(
 ) -> dict:
     """
     Retrieve DuckDuckGo search results based on a specified query.
-
-    Args:
-        query (str): The search query to retrieve results for.
-        region (str): The region to search in (default is "en-us").
-        time_range (str): The time range to search within (default is "d" for past day). Can be "d" (day), "w" (week), "m" (month), or "y" (year).
-        max_results (int): The maximum number of search results to retrieve (default is 10).
-
-    Returns:
-        dict: A dictionary containing the result message and the search results including snippets and URLs.
     """
     try:
         wrapper = DuckDuckGoSearchAPIWrapper(
             region=region, time=time_range, max_results=max_results
         )
-        search = DuckDuckGoSearchResults(api_wrapper=wrapper)
-    
+        search = DuckDuckGoSearchResults(api_wrapper=wrapper, source="news")
+        
+        # Invoke DuckDuckGo search
         response = search.invoke(query)
+
+        # Log the raw response for debugging
+        logger.debug("Raw response from DuckDuckGo: %s", response)
+
+        # Check if response is non-empty and valid
         if not response:
             return {"error": "Received empty response from DuckDuckGo"}
+
+        # Attempt to parse JSON response
+        response_data = json.loads(response.replace("'", '"'))  # Ensure JSON formatting
+
+        # Process and format results
+        results = "\n\n".join(item["snippet"] for item in response_data if "snippet" in item)
+
         return {
             "message": "DuckDuckGo search results retrieved successfully",
-            "results": response,
+            "results": results,
         }
+    except json.JSONDecodeError as e:
+        logger.error("Error parsing JSON response from DuckDuckGo: %s", str(e))
+        return {"error": "Failed to parse JSON response from DuckDuckGo"}
     except Exception as e:
         logger.error("Error in retrieve_duckduckgo_search_results: %s", str(e), exc_info=True)
         return {"error": str(e)}
@@ -562,6 +592,7 @@ def call_agent(agent_executor, user_prompt, session_id):
     return result
 
 
+
 @app.route("/agents/mailworker", methods=["POST"])
 def invoke_mailworker():
     llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
@@ -577,7 +608,7 @@ def invoke_mailworker():
         generate_random_number,
         retrieve_wikipedia_article,
         retrieve_bing_search_results,
-        retrieve_duckduckgo_search_results,
+        retrieve_duckduckgo_search_results
     ]
 
     llm_with_tools = llm.bind_tools(tools)
@@ -591,7 +622,7 @@ def invoke_mailworker():
             You are StockRipper, an expert stock trading and investing agent. 
             Your job is to help maximize the user's investment returns by providing stock market insights, analysis, and recommendations.
             You can also execute trades, manage portfolios, and provide real-time updates on stock prices and market trends.
-            You have access to a set of tools that allow you to perform various tasks.
+            You have access to a set of tools that allow you to perform various tasks.",
             """
         ),
         additional_kwargs={},
@@ -607,15 +638,24 @@ def invoke_mailworker():
         additional_kwargs={},
     )
 
+    history_message = HumanMessagePromptTemplate(
+        prompt=PromptTemplate(
+            input_variables=["history"],
+            input_types={},
+            partial_variables={},
+            template="{history}",
+        ),
+        additional_kwargs={},
+    )
     prompt = ChatPromptTemplate.from_messages(
         [
             system_message,
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            MessagesPlaceholder(variable_name="history"),
             human_message,
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ]
     )
-
+    print(f"Prompt: {prompt}") 
     agent = create_tool_calling_agent(llm, tools, prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=memory)    
     try:
@@ -632,18 +672,6 @@ def invoke_mailworker():
             )
 
         # Invoke the agent with memory context
-        sync_browser = create_sync_playwright_browser()
-        toolkit = PlayWrightBrowserToolkit.from_browser(sync_browser=sync_browser)
-        browser_tools = toolkit.get_tools()
-        tools_by_name = {tool.name: tool for tool in browser_tools}
-        for tool in tools_by_name:
-            print(tool)
-        navigate_tool = tools_by_name["navigate_browser"]
-        get_elements_tool = tools_by_name["get_elements"]  
-        #x = navigate_tool.run({"url": "https://web.archive.org/web/20230428133211/https://cnn.com/world"})
-        #print(x)
-        #y = get_elements_tool.run({"selector": ".container__headline", "attributes": ["innerText"]})
-        #print(y)
         result = call_agent(agent_executor, user_prompt, session_id)
         return jsonify({"result": result})
     except Exception as e:

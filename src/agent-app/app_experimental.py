@@ -53,10 +53,8 @@ from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
 from langchain_community.tools.playwright.utils import (
-    create_async_playwright_browser, create_sync_playwright_browser
+    create_async_playwright_browser,
 )
-
-
 
 # Load environment variables from a .env file.
 load_dotenv()
@@ -92,31 +90,35 @@ logger = logging.getLogger(__name__)
 
 AZURE_STORAGE_ACCOUNT_URL = "https://stockripperstg.blob.core.windows.net"
 
+
 # bit of a hack for running containers locally but giving permissions to storage without using secrets
 class EnvironmentTokenCredential(TokenCredential):
     def __init__(self, token):
         self.token = token
-        self.expires_on = (datetime.now(timezone.utc) + timedelta(hours=24)).timestamp()  
+        self.expires_on = (datetime.now(timezone.utc) + timedelta(hours=24)).timestamp()
 
     def get_token(self, *scopes, **kwargs):
-        return AccessToken(self.token, self.expires_on)  
+        return AccessToken(self.token, self.expires_on)
+
 
 try:
     if AZURE_STORAGE_TOKEN:
         token_credential = EnvironmentTokenCredential(token=AZURE_STORAGE_TOKEN)
         blob_service_client = BlobServiceClient(
-            account_url=AZURE_STORAGE_ACCOUNT_URL,
-            credential=token_credential
+            account_url=AZURE_STORAGE_ACCOUNT_URL, credential=token_credential
         )
         logger.debug("BlobServiceClient successfully created with environment token.")
     else:
-        logger.warning("AZURE_STORAGE_TOKEN not set. Falling back to DefaultAzureCredential.")
+        logger.warning(
+            "AZURE_STORAGE_TOKEN not set. Falling back to DefaultAzureCredential."
+        )
         credential = DefaultAzureCredential()
         blob_service_client = BlobServiceClient(
-            account_url=AZURE_STORAGE_ACCOUNT_URL,
-            credential=credential
+            account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential
         )
-        logger.debug("BlobServiceClient successfully created with DefaultAzureCredential.")
+        logger.debug(
+            "BlobServiceClient successfully created with DefaultAzureCredential."
+        )
 
 except CredentialUnavailableError as e:
     logger.error("Credential unavailable: %s", str(e))
@@ -132,10 +134,10 @@ index_client = SearchIndexClient(
 )
 
 memory_search_client = SearchClient(
-        endpoint=COGNITIVE_SEARCH_URL,
-        index_name=memory_index_name,
-        credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
-    )
+    endpoint=COGNITIVE_SEARCH_URL,
+    index_name=memory_index_name,
+    credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
+)
 
 rag_search_client = SearchClient(
     endpoint=COGNITIVE_SEARCH_URL,
@@ -148,10 +150,12 @@ app = Flask(__name__)
 embeddings_model: str = "text-embedding-ada-002"
 openai_api_version: str = "2023-05-15"
 embeddings: OpenAIEmbeddings = OpenAIEmbeddings(
-    openai_api_key=OPENAI_API_KEY, openai_api_version=openai_api_version, model=embeddings_model
+    openai_api_key=OPENAI_API_KEY,
+    openai_api_version=openai_api_version,
+    model=embeddings_model,
 )
 
-# RAG 
+# RAG
 rag_vector_store: AzureSearch = AzureSearch(
     azure_search_endpoint=COGNITIVE_SEARCH_URL,
     azure_search_key=COGNITIVE_SEARCH_ADMIN_KEY,
@@ -159,7 +163,7 @@ rag_vector_store: AzureSearch = AzureSearch(
     embedding_function=embeddings.embed_query,
 )
 
-# Memory 
+# Memory
 memory_vector_store: AzureSearch = AzureSearch(
     azure_search_endpoint=COGNITIVE_SEARCH_URL,
     azure_search_key=COGNITIVE_SEARCH_ADMIN_KEY,
@@ -167,25 +171,25 @@ memory_vector_store: AzureSearch = AzureSearch(
     embedding_function=embeddings.embed_query,
 )
 
+
 def add_to_memory(vector_store: AzureSearch, conversation: Document, session_id: str):
-    id = vector_store.add_documents(documents=[conversation], index_name=memory_index_name)[0]
-    update_document = {
-        "id": id,
-        "session_id": session_id
-    }
+    id = vector_store.add_documents(
+        documents=[conversation], index_name=memory_index_name
+    )[0]
+    update_document = {"id": id, "session_id": session_id}
     memory_search_client.merge_documents([update_document])
 
+
 # we'll need memory we can pass to the model
-memory_retriever = VectorStoreRetriever(
-    vectorstore=memory_vector_store
-)
+memory_retriever = VectorStoreRetriever(vectorstore=memory_vector_store)
 
 memory = VectorStoreRetrieverMemory(
     retriever=memory_retriever,
-    memory_key="history",  
-    input_key="input",     
-    return_docs=False
+    memory_key="history",
+    input_key="input",
+    return_docs=False,
 )
+
 
 # add tools
 def refresh_auth_token():
@@ -209,6 +213,7 @@ def refresh_auth_token():
         return tokens.get("access_token")
     else:
         raise Exception(f"Failed to refresh token: {response.text}")
+
 
 @tool("send_email")
 def send_email(recipient: str, subject: str, body: str) -> dict:
@@ -388,6 +393,8 @@ def generate_random_number(min: int, max: int) -> int:
         max (int): The maximum value of the random number.
     """
     return random.randint(min, max)
+
+
 @tool("retrieve_wikipedia_article")
 def retrieve_wikipedia_article(topic: str) -> dict:
     """
@@ -401,50 +408,23 @@ def retrieve_wikipedia_article(topic: str) -> dict:
     """
     try:
         logger.debug("Retrieving Wikipedia article for topic: %s", topic)
-        
+
         # Initialize Wikipedia retriever
         retriever = WikipediaRetriever()
         docs = retriever.invoke(topic)
-        #print(docs[0].page_content[:400])
+        # print(docs[0].page_content[:400])
         doc_result = "\n\n".join(doc.page_content for doc in docs)
 
         logger.debug("Wikipedia article retrieved successfully for topic: %s", topic)
-        
-        return {"message": "Wikipedia article retrieved successfully", "article": doc_result}
+
+        return {
+            "message": "Wikipedia article retrieved successfully",
+            "article": doc_result,
+        }
     except Exception as e:
         logger.error("Error in retrieve_wikipedia_article: %s", str(e), exc_info=True)
         return {"error": str(e)}
 
-api_wrapper = BingSearchAPIWrapper()
-bing_tool = BingSearchResults(api_wrapper=api_wrapper)
-
-@tool("retrieve_bing_search_results")
-def retrieve_bing_search_results(query: str) -> dict:
-    """
-    Retrieve Bing search results based on a specified query.
-
-    Args:
-        query (str): The search query to retrieve results for.
-
-    Returns:
-        dict: A dictionary containing the result message and the search results.
-    """
-    try:
-        logger.debug("Retrieving Bing search results for query: %s", query)
-        
-        # Perform the search and parse the response
-        response = bing_tool.invoke(query)
-        response = json.loads(response.replace("'", '"'))  # Ensure JSON formatting
-        
-        # Process and format results
-        results = "\n\n".join(item['snippet'] for item in response if 'snippet' in item)
-        
-        logger.debug("Bing search results retrieved successfully for query: %s", query)
-        
-        return {"message": "Bing search results retrieved successfully", "results": results}
-    except Exception as e:
-        logger.error("Error in retrieve_bing_search_results: %s", str(e), exc_info=True)
-        return {"error": str(e)}
 
 @tool("retrieve_duckduckgo_search_results")
 def retrieve_duckduckgo_search_results(
@@ -463,25 +443,86 @@ def retrieve_duckduckgo_search_results(
         dict: A dictionary containing the result message and the search results including snippets and URLs.
     """
     try:
+
         wrapper = DuckDuckGoSearchAPIWrapper(
             region=region, time=time_range, max_results=max_results
         )
-        search = DuckDuckGoSearchResults(api_wrapper=wrapper)
-    
+        search = DuckDuckGoSearchResults(api_wrapper=wrapper, source="news")
+        search.invoke(query)
+
+        logger.debug(f"Retrieving DuckDuckGo search results for query: {query}")
+
+        # Perform the search and parse the response
         response = search.invoke(query)
-        if not response:
-            return {"error": "Received empty response from DuckDuckGo"}
+        response = json.loads(response.replace("'", '"'))  # Ensure JSON formatting
+
+        # Process and format results
+        results = "\n\n".join(item["snippet"] for item in response if "snippet" in item)
+
+        logger.debug(
+            "DuckDuckGo search results retrieved successfully for query: %s", query
+        )
+
         return {
             "message": "DuckDuckGo search results retrieved successfully",
-            "results": response,
+            "results": results,
         }
     except Exception as e:
-        logger.error("Error in retrieve_duckduckgo_search_results: %s", str(e), exc_info=True)
+        logger.error(
+            "Error in retrieve_duckduckgo_search_results: %s", str(e), exc_info=True
+        )
         return {"error": str(e)}
 
+
+@tool("retrieve_bing_search_results")
+def retrieve_bing_search_results(query: str) -> dict:
+    """
+    Retrieve Bing search results based on a specified query.
+
+    Args:
+        query (str): The search query to retrieve results for.
+
+    Returns:
+        dict: A dictionary containing the result message and the search results.
+    """
+    try:
+
+        api_wrapper = BingSearchAPIWrapper()
+        bing_tool = BingSearchResults(api_wrapper=api_wrapper)
+
+        logger.debug("Retrieving Bing search results for query: %s", query)
+
+        # Perform the search and parse the response
+        response = bing_tool.invoke(query)
+        response = json.loads(response.replace("'", '"'))  # Ensure JSON formatting
+
+        # Process and format results
+        results = "\n\n".join(item["snippet"] for item in response if "snippet" in item)
+
+        logger.debug("Bing search results retrieved successfully for query: %s", query)
+
+        return {
+            "message": "Bing search results retrieved successfully",
+            "results": results,
+        }
+    except Exception as e:
+        logger.error("Error in retrieve_bing_search_results: %s", str(e), exc_info=True)
+        return {"error": str(e)}
+
+
+# add browser tools
+from langchain_community.tools.playwright.utils import (
+    create_async_playwright_browser,  # A synchronous browser is available, though it isn't compatible with jupyter.\n",	  },
+)
+
+async_browser = create_async_playwright_browser()
+toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
+browser_tools = toolkit.get_tools()
+
+
 # main agent functions
-def summarize_conversation(agent_executor, session_history, user_prompt, result):
-    # Define the enhanced summarization prompt
+async def summarize_conversation(agent_executor, session_history, user_prompt, result):
+    # (Adjust to use async calls)
     summarization_prompt = f"""
     You are maintaining a summary of the ongoing conversation to serve as a working memory. 
     This summary should include all key facts, action results, entities, and values generated during the conversation, in a way that will allow you to recall specific information in the future if asked. 
@@ -506,65 +547,76 @@ def summarize_conversation(agent_executor, session_history, user_prompt, result)
     
     Provide a concise yet detailed summary of the conversation so far, focusing on capturing key information in a way that you can reference it easily.
     """
-
-    # Invoke the agent to generate the summary
-    summary_result = agent_executor.invoke({"input": summarization_prompt})
-    summary = summary_result.get("output", "Summary could not be generated.")
+    summary = await agent_executor.ainvoke({"input": summarization_prompt})
     return summary
-
 
 
 def store_summary(vector_store, session_id, summary):
     current_time_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    summary_content = summary.get("input") if isinstance(summary, dict) else summary
+
     summary_doc = Document(
-        page_content=summary,
+        page_content=summary_content,
         metadata={
             "start_timestamp": current_time_utc,
             "session_id": session_id,
-            "summary_version": "latest"
-        }
+            "summary_version": "latest",
+        },
     )
     add_to_memory(vector_store, summary_doc, session_id)
     print("Summary stored successfully.")
 
+
 def prune_old_conversations(vector_store, session_id, keep_latest=1):
     filter_expression = f"session_id eq '{session_id}'"
-    results = list(memory_search_client.search(search_text="", filter=filter_expression))
+    results = list(
+        memory_search_client.search(search_text="", filter=filter_expression)
+    )
     for result in results:
-        result["metadata"] = json.loads(result["metadata"])  
+        result["metadata"] = json.loads(result["metadata"])
     results.sort(
-        key=lambda x: datetime.strptime(x["metadata"]["start_timestamp"], "%Y-%m-%dT%H:%M:%SZ"),
-        reverse=True
+        key=lambda x: datetime.strptime(
+            x["metadata"]["start_timestamp"], "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        reverse=True,
     )
 
     old_docs_to_delete = [{"id": doc["id"]} for doc in results[keep_latest:]]
     if old_docs_to_delete:
         memory_search_client.delete_documents(documents=old_docs_to_delete)
-        print(f"Deleted {len(old_docs_to_delete)} old documents for session {session_id}.")
+        print(
+            f"Deleted {len(old_docs_to_delete)} old documents for session {session_id}."
+        )
     else:
         print("No old documents to delete.")
 
 
-def call_agent(agent_executor, user_prompt, session_id):
+async def call_agent(agent_executor, user_prompt, session_id):
     filter_expression = f"session_id eq '{session_id}'"
-    session_history = list(memory_search_client.search(search_text="", filter=filter_expression))
-    print(f"Found {len(session_history)} documents for session {session_id}.")
-    if len(session_history) == 0:
-        session_history_content = ""
-    else:
-        session_history_content = "" 
-        for doc in session_history:
-            session_history_content += doc["content"] + "\n"
-    result = agent_executor.invoke({"input": f"User Prompt: {user_prompt}\nHistory: \n{session_history_content}"})
-    summary = summarize_conversation(agent_executor, session_history_content, user_prompt, result)
+    session_history = list(
+        memory_search_client.search(search_text="", filter=filter_expression)
+    )
+
+    session_history_content = "\n".join(doc["content"] for doc in session_history)
+    result_output = await agent_executor.ainvoke(
+        {"input": f"User Prompt: {user_prompt}","history":f"{session_history_content}", "context": f""}
+    )
+    print(result_output)
+
+    result = {"output": result_output}
+    summary = await summarize_conversation(
+        agent_executor, session_history_content, user_prompt, result
+    )
+    summary = "placeholder summary"
     store_summary(memory_vector_store, session_id, summary)
     prune_old_conversations(memory_vector_store, session_id)
+
     return result
 
 
 @app.route("/agents/mailworker", methods=["POST"])
-def invoke_mailworker():
-    llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
+async def invoke_mailworker():
+    llm = ChatOpenAI(model="gpt-4", openai_api_key=OPENAI_API_KEY)
     tools = [
         send_email,
         save_to_blob,
@@ -576,11 +628,10 @@ def invoke_mailworker():
         subtract,
         generate_random_number,
         retrieve_wikipedia_article,
-        retrieve_bing_search_results,
         retrieve_duckduckgo_search_results,
+        retrieve_bing_search_results,
     ]
-
-    llm_with_tools = llm.bind_tools(tools)
+    tools.extend(browser_tools)
 
     system_message = SystemMessagePromptTemplate(
         prompt=PromptTemplate(
@@ -591,7 +642,7 @@ def invoke_mailworker():
             You are StockRipper, an expert stock trading and investing agent. 
             Your job is to help maximize the user's investment returns by providing stock market insights, analysis, and recommendations.
             You can also execute trades, manage portfolios, and provide real-time updates on stock prices and market trends.
-            You have access to a set of tools that allow you to perform various tasks.
+            You have access to a set of tools that allow you to perform various tasks.",
             """
         ),
         additional_kwargs={},
@@ -599,7 +650,7 @@ def invoke_mailworker():
 
     human_message = HumanMessagePromptTemplate(
         prompt=PromptTemplate(
-            input_variables=["input"],
+            input_variables=["input", "history", "context"],
             input_types={},
             partial_variables={},
             template="{input}",
@@ -616,8 +667,10 @@ def invoke_mailworker():
         ]
     )
 
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=memory)    
+
+    agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=None)
+
     try:
         data = request.get_json()
         user_prompt = data.get("input")
@@ -631,25 +684,13 @@ def invoke_mailworker():
                 400,
             )
 
-        # Invoke the agent with memory context
-        sync_browser = create_sync_playwright_browser()
-        toolkit = PlayWrightBrowserToolkit.from_browser(sync_browser=sync_browser)
-        browser_tools = toolkit.get_tools()
-        tools_by_name = {tool.name: tool for tool in browser_tools}
-        for tool in tools_by_name:
-            print(tool)
-        navigate_tool = tools_by_name["navigate_browser"]
-        get_elements_tool = tools_by_name["get_elements"]  
-        #x = navigate_tool.run({"url": "https://web.archive.org/web/20230428133211/https://cnn.com/world"})
-        #print(x)
-        #y = get_elements_tool.run({"selector": ".container__headline", "attributes": ["innerText"]})
-        #print(y)
-        result = call_agent(agent_executor, user_prompt, session_id)
-        return jsonify({"result": result})
+        result = await call_agent(agent_executor, user_prompt, session_id)
+        print(result)
+        return jsonify({"result": result['output']})
     except Exception as e:
         logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+
 if __name__ == "__main__":
-    # Run the Flask app on port 5000
     app.run(host="0.0.0.0", port=5000, debug=True)
