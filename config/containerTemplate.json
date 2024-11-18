@@ -2,68 +2,68 @@
     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": {
-        "containerName": {
-            "type": "string"
-        },
-        "acrName": {
-            "type": "string"
-        },
-        "imageName": {
-            "type": "string"
-        },
-        "location": {
-            "type": "string"
-        },
-        "environmentVariables": {
-            "type": "array"
-        },
-        "acrUsername": {
-            "type": "string"
-        },
-        "acrPassword": {
-            "type": "securestring"
-        },
-        "subnetId": {
-            "type": "string"
-        },
+        "containerGroupName": { "type": "string" },
+        "acrName": { "type": "string" },
+        "fsharpImage": { "type": "string" },
+        "agentImage": { "type": "string" },
+        "rustImage": { "type": "string" },
+        "chatInterfaceImage": { "type": "string" },
+        "location": { "type": "string" },
+        "environmentVariables": { "type": "array" },
+        "acrUsername": { "type": "string" },
+        "acrPassword": { "type": "securestring" },
+        "subnetId": { "type": "string" },
         "identity": {
             "type": "object",
-            "defaultValue": {
-                "type": "SystemAssigned"
-            },
-            "metadata": {
-                "description": "Identity configuration for the container instance."
-            }
+            "defaultValue": { "type": "SystemAssigned" },
+            "metadata": { "description": "Identity configuration for the container instance." }
         }
     },
     "resources": [
         {
             "type": "Microsoft.ContainerInstance/containerGroups",
-            "apiVersion": "2021-07-01",  
-            "name": "[parameters('containerName')]",
+            "apiVersion": "2021-07-01",
+            "name": "[parameters('containerGroupName')]",
             "location": "[parameters('location')]",
             "identity": "[if(equals(parameters('identity').type, 'UserAssigned'), parameters('identity'), json('{\"type\": \"SystemAssigned\"}'))]",
             "properties": {
                 "containers": [
                     {
-                        "name": "[parameters('containerName')]",
+                        "name": "fsharp-container",
                         "properties": {
-                            "image": "[parameters('imageName')]",
-                            "resources": {
-                                "requests": {
-                                    "cpu": 1,
-                                    "memoryInGb": 1
-                                }
-                            },
+                            "image": "[parameters('fsharpImage')]",
+                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
                             "environmentVariables": "[parameters('environmentVariables')]"
                         }
-                    }
+                    },
+                    {
+                        "name": "agent-container",
+                        "properties": {
+                            "image": "[parameters('agentImage')]",
+                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
+                            "environmentVariables": "[parameters('environmentVariables')]"
+                        }
+                    },
+                    {
+                        "name": "rust-container",
+                        "properties": {
+                            "image": "[parameters('rustImage')]",
+                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
+                            "environmentVariables": "[parameters('environmentVariables')]"
+                        }
+                    },
+                    {
+                        "name": "chat-container",
+                        "properties": {
+                            "image": "[parameters('chatInterfaceImage')]",
+                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
+                            "environmentVariables": "[parameters('environmentVariables')]"
+                        }
+                    }                    
                 ],
                 "osType": "Linux",
                 "subnetIds": [
-                    {
-                        "id": "[parameters('subnetId')]"
-                    }
+                    { "id": "[parameters('subnetId')]" }
                 ],
                 "imageRegistryCredentials": [
                     {

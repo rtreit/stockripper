@@ -1,11 +1,11 @@
 # Ensure the environment variable is set
-if (-not $env:AZURE_SUBSCRIPTION_ID) {
-    Write-Output "AZURE_SUBSCRIPTION_ID environment variable is not set."
+if (-not $env:AGENTIC_SUBSCRIPTION_ID) {
+    Write-Output "AGENTIC_SUBSCRIPTION_ID environment variable is not set."
     exit 1
 }
 
 # Set the subscription
-az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+az account set --subscription $env:AGENTIC_SUBSCRIPTION_ID
 
 # Define variables
 $resourceGroupName = "stockripper"

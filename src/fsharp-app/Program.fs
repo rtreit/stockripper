@@ -1,4 +1,4 @@
-namespace StockRipperFS
+namespace StockripperFS
 open Microsoft.AspNetCore.Builder
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting

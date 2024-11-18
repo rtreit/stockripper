@@ -1,7 +1,7 @@
 $agentAppImageName = "stockripper-agent-app:latest"
 $fsharpAppImageName = "stockripper-fsharp-app:latest"
 $rustAppImageName = "stockripper-rust-app:latest"
-$chatinterface = "stockripper-chat-interface:latest"
+$chatinterface = "stockripper-chat-app:latest"
 
 Write-Output "Building $agentAppImageName"
 docker build -t $agentAppImageName -f "../src/agent-app/Dockerfile" "../src/agent-app"

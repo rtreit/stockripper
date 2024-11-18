@@ -31,7 +31,7 @@ async fn container_check() -> impl Responder {
 #[get("/containertest")]
 async fn list_containers() -> impl Responder {
     // Define the Python container's URL
-    let python_container_url = "http://stockripper-python-app.stockripper.internal:5000/api/storage/containers";
+    let python_container_url = "http://stockripper-agent-app.stockripper.internal:5000/api/storage/containers";
 
     // Make an HTTP GET request to the Python container
     match reqwest::get(python_container_url).await {

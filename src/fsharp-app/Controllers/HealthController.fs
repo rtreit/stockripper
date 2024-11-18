@@ -1,10 +1,10 @@
-﻿namespace StockRipperFS.Controllers
+﻿namespace StockripperFS.Controllers
 
 open Microsoft.AspNetCore.Mvc
 open Microsoft.Extensions.Logging
 open System.Net.Http
 open System.Net.Http.Json
-open StockRipperFS
+open StockripperFS
 
 type HealthCheckResponse = { Status: string }
 

@@ -11,9 +11,9 @@ load_dotenv()
 app = Flask(__name__)
 
 # Configurations
-CLIENT_ID = os.getenv("STOCKRIPPER_CLIENT_ID")
-CLIENT_SECRET = os.getenv("STOCKRIPPER_CLIENT_SECRET")
-TENANT_ID = "common"  # 'common' works for personal or organizational accounts
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+TENANT_ID = os.getenv("TENANT_ID")
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 REDIRECT_URI = "http://localhost:5000/getAToken"
 

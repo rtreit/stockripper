@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 import requests
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings, AzureChatOpenAI
 from langchain_core.prompts import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
@@ -18,7 +18,7 @@ from langchain_core.prompts import (
 from langchain_core.tools import tool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain.prompts import ChatPromptTemplate
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.embeddings.azure_openai import AzureOpenAIEmbeddings
 from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_community.retrievers import WikipediaRetriever, AzureAISearchRetriever
 from langchain.memory import (
@@ -32,6 +32,7 @@ from langchain_core.documents import Document
 
 from azure.storage.blob import BlobServiceClient
 from azure.search.documents import SearchClient
+
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
     SimpleField,
@@ -45,7 +46,7 @@ import os
 from datetime import datetime, timedelta
 from azure.core.credentials import TokenCredential, AccessToken
 from azure.storage.blob import BlobServiceClient
-from azure.identity import DefaultAzureCredential, CredentialUnavailableError
+from azure.identity import DefaultAzureCredential, CredentialUnavailableError, ManagedIdentityCredential
 import logging
 from langchain_community.tools.bing_search import BingSearchResults
 from langchain_community.utilities import BingSearchAPIWrapper
@@ -53,9 +54,9 @@ from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
 from langchain_community.tools.playwright.utils import (
-    create_async_playwright_browser, create_sync_playwright_browser
+    create_async_playwright_browser,
+    create_sync_playwright_browser,
 )
-
 
 
 # Load environment variables from a .env file.
@@ -64,7 +65,9 @@ load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 COGNITIVE_SEARCH_URL = os.getenv("COGNITIVE_SEARCH_URL")
 COGNITIVE_SEARCH_ADMIN_KEY = os.getenv("COGNITIVE_SEARCH_ADMIN_KEY")
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -72,7 +75,6 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
 REDIRECT_URI = "http://localhost:5000/getAToken"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AZURE_STORAGE_TOKEN = os.getenv("AZURE_STORAGE_TOKEN")
 AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
 AZURE_STORAGE_CONTAINER_NAME = os.getenv(
@@ -82,41 +84,56 @@ if not AZURE_STORAGE_ACCOUNT_URL:
     raise ValueError(
         "AZURE_STORAGE_ACCOUNT_URL environment variable is not set. Please set it to the storage account URL."
     )
+UAMI_CLIENT_ID = os.getenv("UAMI_CLIENT_ID")
 
 rag_index_name = "stockripper-documents"
 memory_index_name = "agent-memory"
 
 # add clients
-access_token = os.getenv("AZURE_STORAGE_TOKEN")
 logger = logging.getLogger(__name__)
 
-AZURE_STORAGE_ACCOUNT_URL = "https://stockripperstg.blob.core.windows.net"
 
 # bit of a hack for running containers locally but giving permissions to storage without using secrets
 class EnvironmentTokenCredential(TokenCredential):
     def __init__(self, token):
         self.token = token
-        self.expires_on = (datetime.now(timezone.utc) + timedelta(hours=24)).timestamp()  
+        self.expires_on = (datetime.now(timezone.utc) + timedelta(hours=24)).timestamp()
 
     def get_token(self, *scopes, **kwargs):
-        return AccessToken(self.token, self.expires_on)  
+        return AccessToken(self.token, self.expires_on)
+
 
 try:
     if AZURE_STORAGE_TOKEN:
         token_credential = EnvironmentTokenCredential(token=AZURE_STORAGE_TOKEN)
         blob_service_client = BlobServiceClient(
-            account_url=AZURE_STORAGE_ACCOUNT_URL,
-            credential=token_credential
+            account_url=AZURE_STORAGE_ACCOUNT_URL, credential=token_credential
         )
         logger.debug("BlobServiceClient successfully created with environment token.")
     else:
-        logger.warning("AZURE_STORAGE_TOKEN not set. Falling back to DefaultAzureCredential.")
-        credential = DefaultAzureCredential()
-        blob_service_client = BlobServiceClient(
-            account_url=AZURE_STORAGE_ACCOUNT_URL,
-            credential=credential
+        logger.warning(
+            "AZURE_STORAGE_TOKEN not set. Falling back to DefaultAzureCredential."
         )
-        logger.debug("BlobServiceClient successfully created with DefaultAzureCredential.")
+        try:
+            credential = DefaultAzureCredential()
+            blob_service_client = BlobServiceClient(
+                account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential
+            )
+            logger.debug(
+                "BlobServiceClient successfully created with DefaultAzureCredential."
+            )
+        except CredentialUnavailableError as e:
+            logger.error("DefaultAzureCredential unavailable: %s", str(e))
+            logger.warning("Falling back to UAMI credential.")
+            if UAMI_CLIENT_ID:
+                uami_credential = ManagedIdentityCredential(client_id=UAMI_CLIENT_ID)
+                blob_service_client = BlobServiceClient(
+                    account_url=AZURE_STORAGE_ACCOUNT_URL, credential=uami_credential
+                )
+                logger.debug("BlobServiceClient successfully created with UAMI credential.")
+            else:
+                logger.error("UAMI client ID not provided.")
+                raise
 
 except CredentialUnavailableError as e:
     logger.error("Credential unavailable: %s", str(e))
@@ -132,10 +149,10 @@ index_client = SearchIndexClient(
 )
 
 memory_search_client = SearchClient(
-        endpoint=COGNITIVE_SEARCH_URL,
-        index_name=memory_index_name,
-        credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
-    )
+    endpoint=COGNITIVE_SEARCH_URL,
+    index_name=memory_index_name,
+    credential=AzureKeyCredential(COGNITIVE_SEARCH_ADMIN_KEY),
+)
 
 rag_search_client = SearchClient(
     endpoint=COGNITIVE_SEARCH_URL,
@@ -146,12 +163,16 @@ rag_search_client = SearchClient(
 app = Flask(__name__)
 
 embeddings_model: str = "text-embedding-ada-002"
-openai_api_version: str = "2023-05-15"
-embeddings: OpenAIEmbeddings = OpenAIEmbeddings(
-    openai_api_key=OPENAI_API_KEY, openai_api_version=openai_api_version, model=embeddings_model
+embeddis_api_version: str = "2023-05-15"
+embeddings = AzureOpenAIEmbeddings(
+    model=embeddings_model,
+    azure_endpoint=f"{AZURE_OPENAI_ENDPOINT}/{embeddings_model}/embeddings?{embeddis_api_version}",
+    chunk_size=1000,
 )
 
-# RAG 
+index_name = "agent-memory"
+
+# RAG
 rag_vector_store: AzureSearch = AzureSearch(
     azure_search_endpoint=COGNITIVE_SEARCH_URL,
     azure_search_key=COGNITIVE_SEARCH_ADMIN_KEY,
@@ -159,7 +180,7 @@ rag_vector_store: AzureSearch = AzureSearch(
     embedding_function=embeddings.embed_query,
 )
 
-# Memory 
+# Memory
 memory_vector_store: AzureSearch = AzureSearch(
     azure_search_endpoint=COGNITIVE_SEARCH_URL,
     azure_search_key=COGNITIVE_SEARCH_ADMIN_KEY,
@@ -167,25 +188,73 @@ memory_vector_store: AzureSearch = AzureSearch(
     embedding_function=embeddings.embed_query,
 )
 
+seed_conversation = Document(
+    page_content="""
+    User: My computer keeps crashing when I try to open the application.
+    Support: I'm here to help! Could you let me know which operating system you're using?
+    User: I'm on Windows 10.
+    Support: Thank you. Let’s try reinstalling the application. Please go to the Control Panel, uninstall the app, and then download the latest version from our website.
+    User: Okay, I’ll give that a try.
+    """,
+    metadata={
+        "session_id": "7890",
+        "title": "Technical Issue - Application Crashes",
+        "timestamp": "2023-11-10T15:00:00Z",
+        "agent_name": "TechSupportBot",
+    },
+)
+
+
+seed_doc = Document(
+    page_content=seed_conversation.page_content, metadata=seed_conversation.metadata
+)
+
+# this will force creation of the index if it doesn't exist
+seed_doc_id = memory_vector_store.add_documents(
+    documents=[seed_doc], index_name=index_name
+)[0]
+
+# delete the seed document
+memory_search_client.delete_documents(documents=[{"id": seed_doc_id}])
+
+# update the index to include the session_id field
+index = index_client.get_index(index_name)
+
+field_names = [field.name for field in index.fields]
+if "session_id" not in field_names:
+    new_field = SimpleField(
+        name="session_id",
+        type=SearchFieldDataType.String,
+        searchable=True,
+        filterable=True,
+        facetable=False,
+        sortable=False,
+    )
+    index.fields.append(new_field)
+    index_client.create_or_update_index(index)
+    print("Field 'session_id' added successfully.")
+else:
+    print("Field 'session_id' already exists in the index. No changes made.")
+
+
 def add_to_memory(vector_store: AzureSearch, conversation: Document, session_id: str):
-    id = vector_store.add_documents(documents=[conversation], index_name=memory_index_name)[0]
-    update_document = {
-        "id": id,
-        "session_id": session_id
-    }
+    id = vector_store.add_documents(
+        documents=[conversation], index_name=memory_index_name
+    )[0]
+    update_document = {"id": id, "session_id": session_id}
     memory_search_client.merge_documents([update_document])
 
+
 # we'll need memory we can pass to the model
-memory_retriever = VectorStoreRetriever(
-    vectorstore=memory_vector_store
-)
+memory_retriever = VectorStoreRetriever(vectorstore=memory_vector_store)
 
 memory = VectorStoreRetrieverMemory(
     retriever=memory_retriever,
-    memory_key="history",  
-    input_key="input",     
-    return_docs=False
+    memory_key="history",
+    input_key="input",
+    return_docs=False,
 )
+
 
 # add tools
 def refresh_auth_token():
@@ -209,6 +278,7 @@ def refresh_auth_token():
         return tokens.get("access_token")
     else:
         raise Exception(f"Failed to refresh token: {response.text}")
+
 
 @tool("send_email")
 def send_email(recipient: str, subject: str, body: str) -> dict:
@@ -388,6 +458,8 @@ def generate_random_number(min: int, max: int) -> int:
         max (int): The maximum value of the random number.
     """
     return random.randint(min, max)
+
+
 @tool("retrieve_wikipedia_article")
 def retrieve_wikipedia_article(topic: str) -> dict:
     """
@@ -401,22 +473,27 @@ def retrieve_wikipedia_article(topic: str) -> dict:
     """
     try:
         logger.debug("Retrieving Wikipedia article for topic: %s", topic)
-        
+
         # Initialize Wikipedia retriever
         retriever = WikipediaRetriever()
         docs = retriever.invoke(topic)
-        #print(docs[0].page_content[:400])
+        # print(docs[0].page_content[:400])
         doc_result = "\n\n".join(doc.page_content for doc in docs)
 
         logger.debug("Wikipedia article retrieved successfully for topic: %s", topic)
-        
-        return {"message": "Wikipedia article retrieved successfully", "article": doc_result}
+
+        return {
+            "message": "Wikipedia article retrieved successfully",
+            "article": doc_result,
+        }
     except Exception as e:
         logger.error("Error in retrieve_wikipedia_article: %s", str(e), exc_info=True)
         return {"error": str(e)}
 
+
 api_wrapper = BingSearchAPIWrapper()
 bing_tool = BingSearchResults(api_wrapper=api_wrapper)
+
 
 @tool("retrieve_bing_search_results")
 def retrieve_bing_search_results(query: str) -> dict:
@@ -431,20 +508,24 @@ def retrieve_bing_search_results(query: str) -> dict:
     """
     try:
         logger.debug("Retrieving Bing search results for query: %s", query)
-        
+
         # Perform the search and parse the response
         response = bing_tool.invoke(query)
         response = json.loads(response.replace("'", '"'))  # Ensure JSON formatting
-        
+
         # Process and format results
-        results = "\n\n".join(item['snippet'] for item in response if 'snippet' in item)
-        
+        results = "\n\n".join(item["snippet"] for item in response if "snippet" in item)
+
         logger.debug("Bing search results retrieved successfully for query: %s", query)
-        
-        return {"message": "Bing search results retrieved successfully", "results": results}
+
+        return {
+            "message": "Bing search results retrieved successfully",
+            "results": results,
+        }
     except Exception as e:
         logger.error("Error in retrieve_bing_search_results: %s", str(e), exc_info=True)
         return {"error": str(e)}
+
 
 @tool("retrieve_duckduckgo_search_results")
 def retrieve_duckduckgo_search_results(
@@ -467,7 +548,7 @@ def retrieve_duckduckgo_search_results(
             region=region, time=time_range, max_results=max_results
         )
         search = DuckDuckGoSearchResults(api_wrapper=wrapper)
-    
+
         response = search.invoke(query)
         if not response:
             return {"error": "Received empty response from DuckDuckGo"}
@@ -476,8 +557,11 @@ def retrieve_duckduckgo_search_results(
             "results": response,
         }
     except Exception as e:
-        logger.error("Error in retrieve_duckduckgo_search_results: %s", str(e), exc_info=True)
+        logger.error(
+            "Error in retrieve_duckduckgo_search_results: %s", str(e), exc_info=True
+        )
         return {"error": str(e)}
+
 
 # main agent functions
 def summarize_conversation(agent_executor, session_history, user_prompt, result):
@@ -513,7 +597,6 @@ def summarize_conversation(agent_executor, session_history, user_prompt, result)
     return summary
 
 
-
 def store_summary(vector_store, session_id, summary):
     current_time_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     summary_doc = Document(
@@ -521,42 +604,55 @@ def store_summary(vector_store, session_id, summary):
         metadata={
             "start_timestamp": current_time_utc,
             "session_id": session_id,
-            "summary_version": "latest"
-        }
+            "summary_version": "latest",
+        },
     )
     add_to_memory(vector_store, summary_doc, session_id)
     print("Summary stored successfully.")
 
+
 def prune_old_conversations(vector_store, session_id, keep_latest=1):
     filter_expression = f"session_id eq '{session_id}'"
-    results = list(memory_search_client.search(search_text="", filter=filter_expression))
+    results = list(
+        memory_search_client.search(search_text="", filter=filter_expression)
+    )
     for result in results:
-        result["metadata"] = json.loads(result["metadata"])  
+        result["metadata"] = json.loads(result["metadata"])
     results.sort(
-        key=lambda x: datetime.strptime(x["metadata"]["start_timestamp"], "%Y-%m-%dT%H:%M:%SZ"),
-        reverse=True
+        key=lambda x: datetime.strptime(
+            x["metadata"]["start_timestamp"], "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        reverse=True,
     )
 
     old_docs_to_delete = [{"id": doc["id"]} for doc in results[keep_latest:]]
     if old_docs_to_delete:
         memory_search_client.delete_documents(documents=old_docs_to_delete)
-        print(f"Deleted {len(old_docs_to_delete)} old documents for session {session_id}.")
+        print(
+            f"Deleted {len(old_docs_to_delete)} old documents for session {session_id}."
+        )
     else:
         print("No old documents to delete.")
 
 
 def call_agent(agent_executor, user_prompt, session_id):
     filter_expression = f"session_id eq '{session_id}'"
-    session_history = list(memory_search_client.search(search_text="", filter=filter_expression))
+    session_history = list(
+        memory_search_client.search(search_text="", filter=filter_expression)
+    )
     print(f"Found {len(session_history)} documents for session {session_id}.")
     if len(session_history) == 0:
         session_history_content = ""
     else:
-        session_history_content = "" 
+        session_history_content = ""
         for doc in session_history:
             session_history_content += doc["content"] + "\n"
-    result = agent_executor.invoke({"input": f"User Prompt: {user_prompt}\nHistory: \n{session_history_content}"})
-    summary = summarize_conversation(agent_executor, session_history_content, user_prompt, result)
+    result = agent_executor.invoke(
+        {"input": f"User Prompt: {user_prompt}\nHistory: \n{session_history_content}"}
+    )
+    summary = summarize_conversation(
+        agent_executor, session_history_content, user_prompt, result
+    )
     store_summary(memory_vector_store, session_id, summary)
     prune_old_conversations(memory_vector_store, session_id)
     return result
@@ -564,7 +660,14 @@ def call_agent(agent_executor, user_prompt, session_id):
 
 @app.route("/agents/mailworker", methods=["POST"])
 def invoke_mailworker():
-    llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY)
+    api_version = "2024-08-01-preview"
+    model = "gpt-4o-mini"
+    llm = AzureChatOpenAI(
+        model="gpt-4o-mini",
+        api_key=AZURE_OPENAI_API_KEY,
+        azure_endpoint=f"{AZURE_OPENAI_ENDPOINT}/{model}/chat/completions?api-version={api_version}",
+        api_version=api_version,
+    )
     tools = [
         send_email,
         save_to_blob,
@@ -576,7 +679,7 @@ def invoke_mailworker():
         subtract,
         generate_random_number,
         retrieve_wikipedia_article,
-        retrieve_bing_search_results
+        retrieve_bing_search_results,
     ]
 
     llm_with_tools = llm.bind_tools(tools)
@@ -587,11 +690,12 @@ def invoke_mailworker():
             input_types={},
             partial_variables={},
             template="""
-            You are StockRipper, an expert stock trading and investing agent. 
-            Your job is to help maximize the user's investment returns by providing stock market insights, analysis, and recommendations.
-            You can also execute trades, manage portfolios, and provide real-time updates on stock prices and market trends.
+            You are an agent named Stockripper. 
+            You are an expert security researcher with a focus on the MTP suite of security products. 
+            Your job is to indpendently investigate and report on attacks against MTP customers, as well as help any humans or other agents who need assistance.
             You have access to a set of tools that allow you to perform various tasks.
-            """
+            When rendering links or URLs, ensure they are clickable and accessible to the user.
+            """,
         ),
         additional_kwargs={},
     )
@@ -616,7 +720,9 @@ def invoke_mailworker():
     )
 
     agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=memory)    
+    agent_executor = AgentExecutor(
+        agent=agent, tools=tools, verbose=True, memory=memory
+    )
     try:
         data = request.get_json()
         user_prompt = data.get("input")
@@ -638,16 +744,17 @@ def invoke_mailworker():
         for tool in tools_by_name:
             print(tool)
         navigate_tool = tools_by_name["navigate_browser"]
-        get_elements_tool = tools_by_name["get_elements"]  
-        #x = navigate_tool.run({"url": "https://web.archive.org/web/20230428133211/https://cnn.com/world"})
-        #print(x)
-        #y = get_elements_tool.run({"selector": ".container__headline", "attributes": ["innerText"]})
-        #print(y)
+        get_elements_tool = tools_by_name["get_elements"]
+        # x = navigate_tool.run({"url": "https://web.archive.org/web/20230428133211/https://cnn.com/world"})
+        # print(x)
+        # y = get_elements_tool.run({"selector": ".container__headline", "attributes": ["innerText"]})
+        # print(y)
         result = call_agent(agent_executor, user_prompt, session_id)
         return jsonify({"result": result})
     except Exception as e:
         logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     # Run the Flask app on port 5000
