@@ -18,7 +18,7 @@ from langchain_core.prompts import (
 from langchain_core.tools import tool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain.prompts import ChatPromptTemplate
-from langchain.embeddings.azure_openai import AzureOpenAIEmbeddings
+from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_community.retrievers import WikipediaRetriever, AzureAISearchRetriever
 from langchain.memory import (
@@ -65,9 +65,8 @@ load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+OPENAI_ENDPOINT = os.getenv("OPENAI_ENDPOINT")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COGNITIVE_SEARCH_URL = os.getenv("COGNITIVE_SEARCH_URL")
 COGNITIVE_SEARCH_ADMIN_KEY = os.getenv("COGNITIVE_SEARCH_ADMIN_KEY")
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -163,10 +162,8 @@ rag_search_client = SearchClient(
 app = Flask(__name__)
 
 embeddings_model: str = "text-embedding-ada-002"
-embeddis_api_version: str = "2023-05-15"
-embeddings = AzureOpenAIEmbeddings(
+embeddings = OpenAIEmbeddings(
     model=embeddings_model,
-    azure_endpoint=f"{AZURE_OPENAI_ENDPOINT}/{embeddings_model}/embeddings?{embeddis_api_version}",
     chunk_size=1000,
 )
 
@@ -660,13 +657,10 @@ def call_agent(agent_executor, user_prompt, session_id):
 
 @app.route("/agents/mailworker", methods=["POST"])
 def invoke_mailworker():
-    api_version = "2024-08-01-preview"
     model = "gpt-4o-mini"
-    llm = AzureChatOpenAI(
-        model="gpt-4o-mini",
-        api_key=AZURE_OPENAI_API_KEY,
-        azure_endpoint=f"{AZURE_OPENAI_ENDPOINT}/{model}/chat/completions?api-version={api_version}",
-        api_version=api_version,
+    llm = ChatOpenAI(
+        model=model,
+        api_key=OPENAI_API_KEY,
     )
     tools = [
         send_email,
