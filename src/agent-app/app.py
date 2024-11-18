@@ -576,8 +576,7 @@ def invoke_mailworker():
         subtract,
         generate_random_number,
         retrieve_wikipedia_article,
-        retrieve_bing_search_results,
-        retrieve_duckduckgo_search_results,
+        retrieve_bing_search_results
     ]
 
     llm_with_tools = llm.bind_tools(tools)
