@@ -57,6 +57,8 @@ from langchain_community.tools.playwright.utils import (
     create_async_playwright_browser,
     create_sync_playwright_browser,
 )
+import nest_asyncio
+nest_asyncio.apply()
 
 
 # Load environment variables from a .env file.
@@ -423,6 +425,7 @@ def list_containers() -> dict:
 
 
 # example from https://python.langchain.com/docs/concepts/tools/
+
 @tool("multiply")
 def multiply(a: int, b: int) -> int:
     """Multiply two numbers."""
@@ -656,12 +659,14 @@ def call_agent(agent_executor, user_prompt, session_id):
 
 
 @app.route("/agents/mailworker", methods=["POST"])
-def invoke_mailworker():
+async def invoke_mailworker():
     model = "gpt-4o-mini"
     llm = ChatOpenAI(
         model=model,
         api_key=OPENAI_API_KEY,
     )
+
+
     tools = [
         send_email,
         save_to_blob,
@@ -675,9 +680,16 @@ def invoke_mailworker():
         retrieve_wikipedia_article,
         retrieve_bing_search_results,
     ]
+    #tools.extend(pw_tools)
 
+    # add browsing support
+    async_browser = create_async_playwright_browser()
+    await async_browser.new_context(ignore_https_errors=True)
+    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
+    browser_tools = toolkit.get_tools()    
+    tools.extend(browser_tools)
+    
     llm_with_tools = llm.bind_tools(tools)
-
     system_message = SystemMessagePromptTemplate(
         prompt=PromptTemplate(
             input_variables=[],
@@ -729,20 +741,7 @@ def invoke_mailworker():
                 jsonify({"error": "Missing 'session_id' parameter in request body"}),
                 400,
             )
-
         # Invoke the agent with memory context
-        sync_browser = create_sync_playwright_browser()
-        toolkit = PlayWrightBrowserToolkit.from_browser(sync_browser=sync_browser)
-        browser_tools = toolkit.get_tools()
-        tools_by_name = {tool.name: tool for tool in browser_tools}
-        for tool in tools_by_name:
-            print(tool)
-        navigate_tool = tools_by_name["navigate_browser"]
-        get_elements_tool = tools_by_name["get_elements"]
-        # x = navigate_tool.run({"url": "https://web.archive.org/web/20230428133211/https://cnn.com/world"})
-        # print(x)
-        # y = get_elements_tool.run({"selector": ".container__headline", "attributes": ["innerText"]})
-        # print(y)
         result = call_agent(agent_executor, user_prompt, session_id)
         return jsonify({"result": result})
     except Exception as e:
