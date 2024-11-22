@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 import os
+import asyncio
 import logging
 import random
 import json
@@ -57,6 +58,8 @@ from langchain_community.tools.playwright.utils import (
     create_async_playwright_browser,
     create_sync_playwright_browser,
 )
+from playwright.async_api import async_playwright
+import atexit
 import nest_asyncio
 nest_asyncio.apply()
 
@@ -162,6 +165,22 @@ rag_search_client = SearchClient(
 )
 
 app = Flask(__name__)
+async_playwright_instance = None
+async_browser = None
+
+async def init_playwright():
+    global async_playwright_instance, async_browser
+    async_playwright_instance = await async_playwright().start()
+    async_browser = await async_playwright_instance.chromium.launch()
+
+# Initialize Playwright and browser before starting the app
+asyncio.run(init_playwright())
+
+@atexit.register
+def cleanup():
+    global async_browser
+    if async_browser:
+        asyncio.run(async_browser.close())
 
 embeddings_model: str = "text-embedding-ada-002"
 embeddings = OpenAIEmbeddings(
@@ -564,7 +583,7 @@ def retrieve_duckduckgo_search_results(
 
 
 # main agent functions
-def summarize_conversation(agent_executor, session_history, user_prompt, result):
+async def summarize_conversation(agent_executor, session_history, user_prompt, result):
     # Define the enhanced summarization prompt
     summarization_prompt = f"""
     You are maintaining a summary of the ongoing conversation to serve as a working memory. 
@@ -592,7 +611,7 @@ def summarize_conversation(agent_executor, session_history, user_prompt, result)
     """
 
     # Invoke the agent to generate the summary
-    summary_result = agent_executor.invoke({"input": summarization_prompt})
+    summary_result = await agent_executor.ainvoke({"input": summarization_prompt})
     summary = summary_result.get("output", "Summary could not be generated.")
     return summary
 
@@ -611,13 +630,16 @@ def store_summary(vector_store, session_id, summary):
     print("Summary stored successfully.")
 
 
-def prune_old_conversations(vector_store, session_id, keep_latest=1):
+async def prune_old_conversations(vector_store, session_id, keep_latest=1):
     filter_expression = f"session_id eq '{session_id}'"
-    results = list(
-        memory_search_client.search(search_text="", filter=filter_expression)
+    results = await asyncio.to_thread(
+        lambda: list(memory_search_client.search(search_text="", filter=filter_expression))
     )
-    for result in results:
-        result["metadata"] = json.loads(result["metadata"])
+    print(f"Results: {results}")  # Inspect the results
+    for x in results:
+        print(f"Document: {x}")
+        print(f"Metadata Type: {type(x['metadata'])}")
+        print(f"Metadata Content: {x['metadata']}")
     results.sort(
         key=lambda x: datetime.strptime(
             x["metadata"]["start_timestamp"], "%Y-%m-%dT%H:%M:%SZ"
@@ -627,45 +649,55 @@ def prune_old_conversations(vector_store, session_id, keep_latest=1):
 
     old_docs_to_delete = [{"id": doc["id"]} for doc in results[keep_latest:]]
     if old_docs_to_delete:
-        memory_search_client.delete_documents(documents=old_docs_to_delete)
-        print(
-            f"Deleted {len(old_docs_to_delete)} old documents for session {session_id}."
+        await asyncio.to_thread(
+            await memory_search_client.delete_documents, documents=old_docs_to_delete
         )
-    else:
-        print("No old documents to delete.")
 
 
-def call_agent(agent_executor, user_prompt, session_id):
+async def call_agent(agent_executor, user_prompt, session_id):
+    # Fetch session history
     filter_expression = f"session_id eq '{session_id}'"
-    session_history = list(
-        memory_search_client.search(search_text="", filter=filter_expression)
+    session_history = await asyncio.to_thread(
+        lambda: list(memory_search_client.search(search_text="", filter=filter_expression))
     )
     print(f"Found {len(session_history)} documents for session {session_id}.")
-    if len(session_history) == 0:
-        session_history_content = ""
-    else:
-        session_history_content = ""
+
+    # Build session history content
+    session_history_content = ""
+    if len(session_history) > 0:
         for doc in session_history:
             session_history_content += doc["content"] + "\n"
-    result = agent_executor.invoke(
-        {"input": f"User Prompt: {user_prompt}\nHistory: \n{session_history_content}"}
-    )
-    summary = summarize_conversation(
-        agent_executor, session_history_content, user_prompt, result
-    )
-    store_summary(memory_vector_store, session_id, summary)
-    prune_old_conversations(memory_vector_store, session_id)
+
+    # Prepare input
+    input_data = {
+        "input": f"User Prompt: {user_prompt}\nHistory: \n{session_history_content}"
+    }
+
+    # Invoke the agent asynchronously with `ainvoke`
+    result = await agent_executor.ainvoke(input_data)
+
+    # Summarize conversation
+    summary = await summarize_conversation(agent_executor, session_history_content, user_prompt, result)
+
+    # Store summary in memory
+    await asyncio.to_thread(store_summary, memory_vector_store, session_id, summary)
+
+    # Prune old conversations
+    await prune_old_conversations(memory_vector_store, session_id)
+
     return result
+
+
 
 
 @app.route("/agents/mailworker", methods=["POST"])
 async def invoke_mailworker():
+    print("Got request to invoke mailworker agent.")
     model = "gpt-4o-mini"
     llm = ChatOpenAI(
         model=model,
         api_key=OPENAI_API_KEY,
     )
-
 
     tools = [
         send_email,
@@ -680,56 +712,55 @@ async def invoke_mailworker():
         retrieve_wikipedia_article,
         retrieve_bing_search_results,
     ]
-    #tools.extend(pw_tools)
-
-    # add browsing support
     async_browser = create_async_playwright_browser()
-    await async_browser.new_context(ignore_https_errors=True)
-    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
-    browser_tools = toolkit.get_tools()    
-    tools.extend(browser_tools)
-    
-    llm_with_tools = llm.bind_tools(tools)
-    system_message = SystemMessagePromptTemplate(
-        prompt=PromptTemplate(
-            input_variables=[],
-            input_types={},
-            partial_variables={},
-            template="""
-            You are an agent named Stockripper. 
-            You are an expert security researcher with a focus on the MTP suite of security products. 
-            Your job is to indpendently investigate and report on attacks against MTP customers, as well as help any humans or other agents who need assistance.
-            You have access to a set of tools that allow you to perform various tasks.
-            When rendering links or URLs, ensure they are clickable and accessible to the user.
-            """,
-        ),
-        additional_kwargs={},
-    )
-
-    human_message = HumanMessagePromptTemplate(
-        prompt=PromptTemplate(
-            input_variables=["input"],
-            input_types={},
-            partial_variables={},
-            template="{input}",
-        ),
-        additional_kwargs={},
-    )
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            system_message,
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
-            human_message,
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
-    )
-
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(
-        agent=agent, tools=tools, verbose=True, memory=memory
-    )
+    print(f"Browser created: {async_browser}")
+    if not async_browser:
+        return jsonify({"error": "Playwright browser not initialized"}), 500
+    print("Creating browser context...")
     try:
+        print("Entering try block...")
+        # Await new_context and use the result as a context manager
+        await async_browser.new_context(ignore_https_errors=True)
+        print("Browser context created.")
+        toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
+        browser_tools = toolkit.get_tools()
+        tools.extend(browser_tools)
+
+        llm_with_tools = llm.bind_tools(tools)
+        system_message = SystemMessagePromptTemplate(
+            prompt=PromptTemplate(
+                input_variables=[],
+                input_types={},
+                partial_variables={},
+                template="""You are an agent named Stockripper...""",
+            ),
+            additional_kwargs={},
+        )
+
+        human_message = HumanMessagePromptTemplate(
+            prompt=PromptTemplate(
+                input_variables=["input"],
+                input_types={},
+                partial_variables={},
+                template="{input}",
+            ),
+            additional_kwargs={},
+        )
+
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                system_message,
+                MessagesPlaceholder(variable_name="chat_history", optional=True),
+                human_message,
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ]
+        )
+
+        agent = create_tool_calling_agent(llm, tools, prompt)
+        agent_executor = AgentExecutor(
+            agent=agent, tools=tools, verbose=True, memory=memory
+        )
+
         data = request.get_json()
         user_prompt = data.get("input")
         session_id = data.get("session_id")
@@ -737,18 +768,17 @@ async def invoke_mailworker():
         if not user_prompt:
             return jsonify({"error": "Missing 'input' parameter in request body"}), 400
         if not session_id:
-            return (
-                jsonify({"error": "Missing 'session_id' parameter in request body"}),
-                400,
-            )
-        # Invoke the agent with memory context
-        result = call_agent(agent_executor, user_prompt, session_id)
+            return jsonify({"error": "Missing 'session_id' parameter in request body"}), 400
+
+        result = await call_agent(agent_executor, user_prompt, session_id)
         return jsonify({"result": result})
     except Exception as e:
         logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
+
 if __name__ == "__main__":
-    # Run the Flask app on port 5000
+    print("Starting app...")
     app.run(host="0.0.0.0", port=5000, debug=True)
+
