@@ -1,6 +1,5 @@
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify
 import os
-import asyncio
 import logging
 import random
 import json
@@ -24,9 +23,7 @@ from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_community.retrievers import WikipediaRetriever, AzureAISearchRetriever
 from langchain.memory import (
     VectorStoreRetrieverMemory,
-    ConversationBufferMemory,
-    ConversationBufferWindowMemory,
-    ConversationSummaryMemory,
+    ConversationBufferWindowMemory
 )
 from langchain.vectorstores.base import VectorStoreRetriever
 from langchain_core.documents import Document
@@ -37,8 +34,6 @@ from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
     SimpleField,
-    SearchIndex,
-    SearchableField,
     SearchFieldDataType,
 )
 from azure.core.credentials import AzureKeyCredential, TokenCredential
@@ -47,7 +42,11 @@ import os
 from datetime import datetime, timedelta
 from azure.core.credentials import TokenCredential, AccessToken
 from azure.storage.blob import BlobServiceClient
-from azure.identity import DefaultAzureCredential, CredentialUnavailableError, ManagedIdentityCredential
+from azure.identity import (
+    DefaultAzureCredential,
+    CredentialUnavailableError,
+    ManagedIdentityCredential,
+)
 import logging
 from langchain_community.tools.bing_search import BingSearchResults
 from langchain_community.utilities import BingSearchAPIWrapper
@@ -55,14 +54,9 @@ from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
 from langchain_community.tools.playwright.utils import (
-    create_async_playwright_browser,
     create_sync_playwright_browser,
 )
-from playwright.async_api import async_playwright
-import atexit
-import nest_asyncio
-nest_asyncio.apply()
-
+from langchain.schema import AIMessage, HumanMessage
 
 # Load environment variables from a .env file.
 load_dotenv()
@@ -93,10 +87,8 @@ UAMI_CLIENT_ID = os.getenv("UAMI_CLIENT_ID")
 rag_index_name = "stockripper-documents"
 memory_index_name = "agent-memory"
 
+
 # add clients
-logger = logging.getLogger(__name__)
-
-
 # bit of a hack for running containers locally but giving permissions to storage without using secrets
 class EnvironmentTokenCredential(TokenCredential):
     def __init__(self, token):
@@ -113,7 +105,7 @@ try:
         blob_service_client = BlobServiceClient(
             account_url=AZURE_STORAGE_ACCOUNT_URL, credential=token_credential
         )
-        logger.debug("BlobServiceClient successfully created with environment token.")
+        print("BlobServiceClient successfully created with environment token.")
     else:
         logger.warning(
             "AZURE_STORAGE_TOKEN not set. Falling back to DefaultAzureCredential."
@@ -123,9 +115,7 @@ try:
             blob_service_client = BlobServiceClient(
                 account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential
             )
-            logger.debug(
-                "BlobServiceClient successfully created with DefaultAzureCredential."
-            )
+            print("BlobServiceClient successfully created with DefaultAzureCredential.")
         except CredentialUnavailableError as e:
             logger.error("DefaultAzureCredential unavailable: %s", str(e))
             logger.warning("Falling back to UAMI credential.")
@@ -134,7 +124,7 @@ try:
                 blob_service_client = BlobServiceClient(
                     account_url=AZURE_STORAGE_ACCOUNT_URL, credential=uami_credential
                 )
-                logger.debug("BlobServiceClient successfully created with UAMI credential.")
+                print("BlobServiceClient successfully created with UAMI credential.")
             else:
                 logger.error("UAMI client ID not provided.")
                 raise
@@ -165,22 +155,6 @@ rag_search_client = SearchClient(
 )
 
 app = Flask(__name__)
-async_playwright_instance = None
-async_browser = None
-
-async def init_playwright():
-    global async_playwright_instance, async_browser
-    async_playwright_instance = await async_playwright().start()
-    async_browser = await async_playwright_instance.chromium.launch()
-
-# Initialize Playwright and browser before starting the app
-asyncio.run(init_playwright())
-
-@atexit.register
-def cleanup():
-    global async_browser
-    if async_browser:
-        asyncio.run(async_browser.close())
 
 embeddings_model: str = "text-embedding-ada-002"
 embeddings = OpenAIEmbeddings(
@@ -273,6 +247,14 @@ memory = VectorStoreRetrieverMemory(
     return_docs=False,
 )
 
+memory_window = ConversationBufferWindowMemory(
+    memory_key="chat_history",
+    input_key="user_input",
+    output_key="output",
+    k=5,  # Keep the last 5 exchanges
+    return_messages=True,
+)
+
 
 # add tools
 def refresh_auth_token():
@@ -312,7 +294,7 @@ def send_email(recipient: str, subject: str, body: str) -> dict:
         dict: A dictionary containing the result message and the subject of the email.
     """
     try:
-        logger.info("Received request to send e-mail.")
+        print("Received request to send e-mail.")
         if not recipient:
             raise ValueError("Recipient address is required.")
         if not subject:
@@ -320,7 +302,7 @@ def send_email(recipient: str, subject: str, body: str) -> dict:
         if not body:
             raise ValueError("Body is required.")
 
-        logger.debug(f"Sending e-mail to: {recipient}")
+        print(f"Sending e-mail to: {recipient}")
         access_token = refresh_auth_token()
         email_payload = {
             "message": {
@@ -349,7 +331,7 @@ def send_email(recipient: str, subject: str, body: str) -> dict:
             json=email_payload,
         )
         if response.status_code == 202:
-            logger.info("Email sent successfully to %s", recipient)
+            print("Email sent successfully to %s", recipient)
             return {"message": "E-mail sent", "subject": subject}
         else:
             logger.error(f"Failed to send email. Status Code: {response.status_code}")
@@ -374,7 +356,7 @@ def save_to_blob(container_name: str, blob_name: str, file_content: bytes) -> di
         dict: A dictionary containing a success message and the blob name.
     """
     try:
-        logger.debug(
+        print(
             "Saving file to blob storage. Container: %s, Blob: %s",
             container_name,
             blob_name,
@@ -383,11 +365,11 @@ def save_to_blob(container_name: str, blob_name: str, file_content: bytes) -> di
 
         if not container_client.exists():
             container_client.create_container()
-            logger.debug("Container created: %s", container_name)
+            print("Container created: %s", container_name)
 
         blob_client = container_client.get_blob_client(blob_name)
         blob_client.upload_blob(file_content, overwrite=True)
-        logger.debug("File uploaded successfully: %s", blob_name)
+        print("File uploaded successfully: %s", blob_name)
 
         return {"message": "File uploaded successfully", "blob_name": blob_name}
     except Exception as e:
@@ -407,12 +389,12 @@ def list_blobs(container_name: str) -> dict:
         dict: A dictionary containing the result message and the list of blob names.
     """
     try:
-        logger.debug("Listing blobs in container: %s", container_name)
+        print("Listing blobs in container: %s", container_name)
         container_client = blob_service_client.get_container_client(container_name)
 
         blob_list = container_client.list_blobs()
         blobs = [blob.name for blob in blob_list]
-        logger.debug("Blobs listed successfully: %s", blobs)
+        print("Blobs listed successfully: %s", blobs)
 
         return {"message": "Blobs listed successfully", "blobs": blobs}
     except Exception as e:
@@ -429,10 +411,10 @@ def list_containers() -> dict:
         dict: A dictionary containing the result message and the list of container names.
     """
     try:
-        logger.debug("Listing all containers in blob storage")
+        print("Listing all containers in blob storage")
         containers = blob_service_client.list_containers()
         container_names = [container.name for container in containers]
-        logger.debug("Containers listed successfully: %s", container_names)
+        print("Containers listed successfully: %s", container_names)
 
         return {
             "message": "Containers listed successfully",
@@ -444,6 +426,7 @@ def list_containers() -> dict:
 
 
 # example from https://python.langchain.com/docs/concepts/tools/
+
 
 @tool("multiply")
 def multiply(a: int, b: int) -> int:
@@ -491,7 +474,7 @@ def retrieve_wikipedia_article(topic: str) -> dict:
         dict: A dictionary containing the result message and the article content.
     """
     try:
-        logger.debug("Retrieving Wikipedia article for topic: %s", topic)
+        print("Retrieving Wikipedia article for topic: %s", topic)
 
         # Initialize Wikipedia retriever
         retriever = WikipediaRetriever()
@@ -499,7 +482,7 @@ def retrieve_wikipedia_article(topic: str) -> dict:
         # print(docs[0].page_content[:400])
         doc_result = "\n\n".join(doc.page_content for doc in docs)
 
-        logger.debug("Wikipedia article retrieved successfully for topic: %s", topic)
+        print("Wikipedia article retrieved successfully for topic: %s", topic)
 
         return {
             "message": "Wikipedia article retrieved successfully",
@@ -526,7 +509,7 @@ def retrieve_bing_search_results(query: str) -> dict:
         dict: A dictionary containing the result message and the search results.
     """
     try:
-        logger.debug("Retrieving Bing search results for query: %s", query)
+        print("Retrieving Bing search results for query: %s", query)
 
         # Perform the search and parse the response
         response = bing_tool.invoke(query)
@@ -535,7 +518,7 @@ def retrieve_bing_search_results(query: str) -> dict:
         # Process and format results
         results = "\n\n".join(item["snippet"] for item in response if "snippet" in item)
 
-        logger.debug("Bing search results retrieved successfully for query: %s", query)
+        print("Bing search results retrieved successfully for query: %s", query)
 
         return {
             "message": "Bing search results retrieved successfully",
@@ -582,37 +565,33 @@ def retrieve_duckduckgo_search_results(
         return {"error": str(e)}
 
 
-# main agent functions
-async def summarize_conversation(agent_executor, session_history, user_prompt, result):
-    # Define the enhanced summarization prompt
+def summarize_conversation(llm, session_history, user_prompt, agent_response):
+    """
+    Generate a concise session summary while keeping verbatim details separate.
+    """
     summarization_prompt = f"""
-    You are maintaining a summary of the ongoing conversation to serve as a working memory. 
-    This summary should include all key facts, action results, entities, and values generated during the conversation, in a way that will allow you to recall specific information in the future if asked. 
-    Examples:
-    
-    - Any websites, links, or URLs visited or discussed
-    - Unique values or numbers you have provided, like random numbers or IDs
-    - Key decisions, instructions, or choices made by the user or agent
-    - Names, dates, and any other specific entities referenced
-    - Similar kinds of information
-    
-    Format the summary to be as concise as possible while retaining these essential details. 
-    Do not include filler or repetitive information. 
-    Your goal is to create a memory of important facts, allowing you to answer questions like "What website did you previously browse?" or "What was the last number you provided?" without needing to review the entire conversation history.
+    You are maintaining a memory of this conversation. Include:
+    - Verbatim details from recent interactions.
+    - A concise summary of key points and decisions made so far.
 
-    Session History:
+    Recent History:
     {session_history}
 
     Latest Interaction:
     User: {user_prompt}
-    Agent: {result['output']}
-    
-    Provide a concise yet detailed summary of the conversation so far, focusing on capturing key information in a way that you can reference it easily.
+    Agent: {agent_response}
+
+    Generate a concise summary of the key details discussed.
     """
 
-    # Invoke the agent to generate the summary
-    summary_result = await agent_executor.ainvoke({"input": summarization_prompt})
-    summary = summary_result.get("output", "Summary could not be generated.")
+    try:
+        # Use invoke() and extract content
+        summary_message = llm.invoke(summarization_prompt)
+        summary = summary_message.content
+    except Exception as e:
+        logger.error(f"Error generating summary: {str(e)}", exc_info=True)
+        summary = "Summary could not be generated due to an error."
+
     return summary
 
 
@@ -630,16 +609,13 @@ def store_summary(vector_store, session_id, summary):
     print("Summary stored successfully.")
 
 
-async def prune_old_conversations(vector_store, session_id, keep_latest=1):
+def prune_old_conversations(vector_store, session_id, keep_latest=1):
     filter_expression = f"session_id eq '{session_id}'"
-    results = await asyncio.to_thread(
-        lambda: list(memory_search_client.search(search_text="", filter=filter_expression))
+    results = list(
+        memory_search_client.search(search_text="", filter=filter_expression)
     )
-    print(f"Results: {results}")  # Inspect the results
-    for x in results:
-        print(f"Document: {x}")
-        print(f"Metadata Type: {type(x['metadata'])}")
-        print(f"Metadata Content: {x['metadata']}")
+    for result in results:
+        result["metadata"] = json.loads(result["metadata"])
     results.sort(
         key=lambda x: datetime.strptime(
             x["metadata"]["start_timestamp"], "%Y-%m-%dT%H:%M:%SZ"
@@ -649,51 +625,85 @@ async def prune_old_conversations(vector_store, session_id, keep_latest=1):
 
     old_docs_to_delete = [{"id": doc["id"]} for doc in results[keep_latest:]]
     if old_docs_to_delete:
-        await asyncio.to_thread(
-            await memory_search_client.delete_documents, documents=old_docs_to_delete
+        memory_search_client.delete_documents(documents=old_docs_to_delete)
+        print(
+            f"Deleted {len(old_docs_to_delete)} old documents for session {session_id}."
+        )
+    else:
+        print("No old documents to delete.")
+
+
+def format_messages(messages):
+    formatted_messages = []
+    for message in messages:
+        formatted_messages.append(message.content)
+    return "\n".join(formatted_messages)
+
+
+
+def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
+    try:
+        # Retrieve verbatim session history
+        filter_expression = f"session_id eq '{session_id}'"
+        session_history_docs = list(
+            memory_search_client.search(search_text="", filter=filter_expression)
+        )
+        session_history_content = (
+            "\n".join(doc["content"] for doc in session_history_docs)
+            if session_history_docs
+            else ""
         )
 
+        # Retrieve relevant context using RAG
+        rag_results = rag_vector_store.similarity_search(user_prompt, k=3)
+        rag_content = "\n".join([doc.page_content for doc in rag_results])
+        recent_history_text = format_messages(memory_window.chat_memory.messages)
 
-async def call_agent(agent_executor, user_prompt, session_id):
-    # Fetch session history
-    filter_expression = f"session_id eq '{session_id}'"
-    session_history = await asyncio.to_thread(
-        lambda: list(memory_search_client.search(search_text="", filter=filter_expression))
-    )
-    print(f"Found {len(session_history)} documents for session {session_id}.")
+        print(f"\nInvoking agent with context for session {session_id}...")
+        print(f"\Current User Request: {user_prompt}")
+        print(F"\nKnowledge Context: {rag_content}")
+        print(f"\nRecent Verbatim History: {recent_history_text}")
+        print(f"\nPast Conversation Summary: {session_history_content}")
 
-    # Build session history content
-    session_history_content = ""
-    if len(session_history) > 0:
-        for doc in session_history:
-            session_history_content += doc["content"] + "\n"
+        result = agent_executor.invoke(
+            {
+                "user_input": user_prompt,
+                "knowledge_context": rag_content,
+                "recent_history": recent_history_text,
+                "chat_history": session_history_content,
+            }
+        )
 
-    # Prepare input
-    input_data = {
-        "input": f"User Prompt: {user_prompt}\nHistory: \n{session_history_content}"
-    }
+        agent_output = result.get("output", "No response provided.")
+        if hasattr(agent_output, "content"):
+            agent_output = agent_output.content
 
-    # Invoke the agent asynchronously with `ainvoke`
-    result = await agent_executor.ainvoke(input_data)
-
-    # Summarize conversation
-    summary = await summarize_conversation(agent_executor, session_history_content, user_prompt, result)
-
-    # Store summary in memory
-    await asyncio.to_thread(store_summary, memory_vector_store, session_id, summary)
-
-    # Prune old conversations
-    await prune_old_conversations(memory_vector_store, session_id)
-
-    return result
+        # Save verbatim interaction to memory
+        # Before saving context, ensure no duplication
+        if memory_window.chat_memory.messages[-1].content != agent_output:
+            memory_window.save_context(
+                {"user_input": user_prompt}, {"output": agent_output}
+            )
 
 
+        # Generate a concise summary and store
+        summarized_history = summarize_conversation(
+            llm, session_history_content, user_prompt, agent_output
+        )
+        store_summary(memory_vector_store, session_id, summarized_history)
+        prune_old_conversations(memory_vector_store, session_id)
+
+        #print("Current Memory Window:")
+        #print(memory_window.chat_memory.messages)
+        return result
+    except Exception as e:
+        logger.error(f"Error in call_agent_with_context: {str(e)}", exc_info=True)
+        return {"error": str(e)}
 
 
 @app.route("/agents/mailworker", methods=["POST"])
-async def invoke_mailworker():
-    print("Got request to invoke mailworker agent.")
-    model = "gpt-4o-mini"
+def invoke_mailworker():
+    model = "gpt-4o"
     llm = ChatOpenAI(
         model=model,
         api_key=OPENAI_API_KEY,
@@ -712,55 +722,56 @@ async def invoke_mailworker():
         retrieve_wikipedia_article,
         retrieve_bing_search_results,
     ]
-    async_browser = create_async_playwright_browser()
-    print(f"Browser created: {async_browser}")
-    if not async_browser:
-        return jsonify({"error": "Playwright browser not initialized"}), 500
-    print("Creating browser context...")
+
+    # Add browsing support
+    sync_browser = create_sync_playwright_browser()
+    sync_browser.new_context(ignore_https_errors=True)
+    toolkit = PlayWrightBrowserToolkit.from_browser(sync_browser=sync_browser)
+    browser_tools = toolkit.get_tools()
+    tools.extend(browser_tools)
+
+    llm_with_tools = llm.bind_tools(tools)
+    system_message = SystemMessagePromptTemplate(
+        prompt=PromptTemplate(
+            input_variables=[],
+            input_types={},
+            partial_variables={},
+            template="""
+            You are an assistant named Stockripper. Your job is to assist users by answering their questions and performing tasks using the available tools.
+
+            Focus on the user's current request. Use prior context only if it helps answer the question. Do not repeat previous actions unless the user asks you to do so explicitly.
+            """,
+        )
+    )
+
+    human_message = HumanMessagePromptTemplate(
+        prompt=PromptTemplate(
+            input_variables=["user_input", "knowledge_context", "recent_history", "chat_history"],
+            template="""
+            Current User Request: {user_input}
+            ** IMPORTANT: the above request is what I'd like you to respond to. What follows is additional context to help you understand my needs better, but you can ignore it if it's not relevant to my main request. **
+            Knowledge Context: {knowledge_context}
+            Recent Verbatim History: {recent_history}
+            Past Conversation Summary: {chat_history}
+            """,
+        )
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            system_message,
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            human_message,
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ]
+    )
+
+    agent = create_tool_calling_agent(llm, tools, prompt)
+    agent_executor = AgentExecutor(
+        agent=agent, tools=tools, verbose=True, memory=memory_window
+    )
+
     try:
-        print("Entering try block...")
-        # Await new_context and use the result as a context manager
-        await async_browser.new_context(ignore_https_errors=True)
-        print("Browser context created.")
-        toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
-        browser_tools = toolkit.get_tools()
-        tools.extend(browser_tools)
-
-        llm_with_tools = llm.bind_tools(tools)
-        system_message = SystemMessagePromptTemplate(
-            prompt=PromptTemplate(
-                input_variables=[],
-                input_types={},
-                partial_variables={},
-                template="""You are an agent named Stockripper...""",
-            ),
-            additional_kwargs={},
-        )
-
-        human_message = HumanMessagePromptTemplate(
-            prompt=PromptTemplate(
-                input_variables=["input"],
-                input_types={},
-                partial_variables={},
-                template="{input}",
-            ),
-            additional_kwargs={},
-        )
-
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                system_message,
-                MessagesPlaceholder(variable_name="chat_history", optional=True),
-                human_message,
-                MessagesPlaceholder(variable_name="agent_scratchpad"),
-            ]
-        )
-
-        agent = create_tool_calling_agent(llm, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent, tools=tools, verbose=True, memory=memory
-        )
-
         data = request.get_json()
         user_prompt = data.get("input")
         session_id = data.get("session_id")
@@ -768,17 +779,26 @@ async def invoke_mailworker():
         if not user_prompt:
             return jsonify({"error": "Missing 'input' parameter in request body"}), 400
         if not session_id:
-            return jsonify({"error": "Missing 'session_id' parameter in request body"}), 400
+            return (
+                jsonify({"error": "Missing 'session_id' parameter in request body"}),
+                400,
+            )
 
-        result = await call_agent(agent_executor, user_prompt, session_id)
-        return jsonify({"result": result})
+        # Invoke the agent with memory and RAG context
+        result = call_agent_with_context(agent_executor, llm, user_prompt, session_id)
+
+        # Ensure the result is JSON-serializable
+        if isinstance(result, dict):
+            serializable_result = {k: str(v) for k, v in result.items()}
+        else:
+            serializable_result = {"output": str(result)}
+
+        return jsonify({"result": serializable_result})
     except Exception as e:
         logger.error("Error invoking agent: %s", str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
-
 if __name__ == "__main__":
-    print("Starting app...")
+    # Run the Flask app on port 5000
     app.run(host="0.0.0.0", port=5000, debug=True)
-

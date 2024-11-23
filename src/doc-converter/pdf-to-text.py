@@ -35,5 +35,5 @@ for filename in os.listdir(pdf_folder):
         # Save cleaned text to file
         with open(text_path, "w", encoding="utf-8") as f:
             f.write(text)
-        
+
         print(f"Saved cleaned text to {text_path}")

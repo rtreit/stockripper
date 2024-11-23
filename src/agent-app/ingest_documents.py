@@ -34,25 +34,31 @@ loaded_docs_log = "loaded_documents.log"
 
 os.makedirs(documents_folder, exist_ok=True)
 if not os.path.exists(loaded_docs_log):
-    open(loaded_docs_log, 'w').close()
+    open(loaded_docs_log, "w").close()
 
 with open(loaded_docs_log, "r") as log_file:
     loaded_documents = set(log_file.read().splitlines())
+
 
 def fetch_and_save_wikipedia_articles(topics):
     retriever = WikipediaRetriever()
     for topic in topics:
         articles = retriever.invoke(topic)
         for article in articles:
-            title = article.metadata["title"].replace("/", "_")  # Sanitize title for filename
+            title = article.metadata["title"].replace(
+                "/", "_"
+            )  # Sanitize title for filename
             file_path = os.path.join(documents_folder, f"{title}.txt")
-            
+
             if title not in loaded_documents:
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(article.page_content)
                 logger.info(f"Saved Wikipedia article '{title}' to {file_path}")
             else:
-                logger.info(f"Article '{title}' already exists in documents folder, skipping.")
+                logger.info(
+                    f"Article '{title}' already exists in documents folder, skipping."
+                )
+
 
 def ingest_documents():
     text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
@@ -60,23 +66,32 @@ def ingest_documents():
     for file in os.listdir(documents_folder):
         if file.endswith(".txt") and file not in loaded_documents:
             file_path = os.path.join(documents_folder, file)
-            
+
             loader = TextLoader(file_path, encoding="utf-8")
             documents = loader.load()
             docs = text_splitter.split_documents(documents)
-            
+
             vector_store.add_documents(documents=docs)
-            
+
             with open(loaded_docs_log, "a") as log_file:
                 log_file.write(f"{file}\n")
             logger.info(f"Ingested and logged document '{file}'")
 
+
 def main():
-    topics = ["Aggressive Investment Strategy", "Passive Investing", "Value Investing", "Investment Strategy", "Investing", "Securities Analysis"]
+    topics = [
+        "Aggressive Investment Strategy",
+        "Passive Investing",
+        "Value Investing",
+        "Investment Strategy",
+        "Investing",
+        "Securities Analysis",
+    ]
 
     fetch_and_save_wikipedia_articles(topics)
 
     ingest_documents()
+
 
 if __name__ == "__main__":
     main()

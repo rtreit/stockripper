@@ -12,9 +12,11 @@ logger = logging.getLogger(__name__)
 # URL of the agent service
 AGENT_SERVICE_URL = os.getenv("AGENT_SERVICE_URL", "http://agent-container:5000/agents")
 
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -40,6 +42,7 @@ def chat():
     except Exception as e:
         logger.error("Error communicating with the agent service: %s", str(e))
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5004, debug=True)
