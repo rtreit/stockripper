@@ -57,8 +57,6 @@ from langchain_community.tools.playwright.utils import (
     create_async_playwright_browser,
     create_sync_playwright_browser,
 )
-import nest_asyncio
-nest_asyncio.apply()
 
 
 # Load environment variables from a .env file.
@@ -659,8 +657,8 @@ def call_agent(agent_executor, user_prompt, session_id):
 
 
 @app.route("/agents/mailworker", methods=["POST"])
-async def invoke_mailworker():
-    model = "gpt-4o-mini"
+def invoke_mailworker():
+    model = "gpt-4o"
     llm = ChatOpenAI(
         model=model,
         api_key=OPENAI_API_KEY,
@@ -683,9 +681,9 @@ async def invoke_mailworker():
     #tools.extend(pw_tools)
 
     # add browsing support
-    async_browser = create_async_playwright_browser()
-    await async_browser.new_context(ignore_https_errors=True)
-    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
+    sync_browser = create_sync_playwright_browser()
+    sync_browser.new_context(ignore_https_errors=True)
+    toolkit = PlayWrightBrowserToolkit.from_browser(sync_browser=sync_browser)
     browser_tools = toolkit.get_tools()    
     tools.extend(browser_tools)
     
@@ -696,10 +694,18 @@ async def invoke_mailworker():
             input_types={},
             partial_variables={},
             template="""
-            You are an agent named Stockripper. 
-            You are an expert security researcher with a focus on the MTP suite of security products. 
-            Your job is to indpendently investigate and report on attacks against MTP customers, as well as help any humans or other agents who need assistance.
+            You are an agent named Stockripper.
+
             You have access to a set of tools that allow you to perform various tasks.
+
+            Your job is to assist users with their requests by providing accurate information, answering questions, and performing tasks using the available tools.
+
+            **Important Instructions:**
+
+            - Whenever a user's request requires accessing external information (e.g., browsing a website), you **must** use the appropriate tool.
+            - Do not make assumptions or fabricate information about external content.
+            - Provide detailed summaries or information as requested, ensuring accuracy by using the tools.
+
             When rendering links or URLs, ensure they are clickable and accessible to the user.
             """,
         ),
