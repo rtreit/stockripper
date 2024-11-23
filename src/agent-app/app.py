@@ -58,6 +58,10 @@ from langchain_community.tools.playwright.utils import (
     create_async_playwright_browser,
     create_sync_playwright_browser,
 )
+from playwright.async_api import async_playwright
+import atexit
+import nest_asyncio
+nest_asyncio.apply()
 
 
 # Load environment variables from a .env file.
@@ -687,8 +691,9 @@ async def call_agent(agent_executor, user_prompt, session_id):
 
 
 @app.route("/agents/mailworker", methods=["POST"])
-def invoke_mailworker():
-    model = "gpt-4o"
+async def invoke_mailworker():
+    print("Got request to invoke mailworker agent.")
+    model = "gpt-4o-mini"
     llm = ChatOpenAI(
         model=model,
         api_key=OPENAI_API_KEY,
@@ -707,63 +712,11 @@ def invoke_mailworker():
         retrieve_wikipedia_article,
         retrieve_bing_search_results,
     ]
-    #tools.extend(pw_tools)
-
-    # add browsing support
-    sync_browser = create_sync_playwright_browser()
-    sync_browser.new_context(ignore_https_errors=True)
-    toolkit = PlayWrightBrowserToolkit.from_browser(sync_browser=sync_browser)
-    browser_tools = toolkit.get_tools()    
-    tools.extend(browser_tools)
-    
-    llm_with_tools = llm.bind_tools(tools)
-    system_message = SystemMessagePromptTemplate(
-        prompt=PromptTemplate(
-            input_variables=[],
-            input_types={},
-            partial_variables={},
-            template="""
-            You are an agent named Stockripper.
-
-            You have access to a set of tools that allow you to perform various tasks.
-
-            Your job is to assist users with their requests by providing accurate information, answering questions, and performing tasks using the available tools.
-
-            **Important Instructions:**
-
-            - Whenever a user's request requires accessing external information (e.g., browsing a website), you **must** use the appropriate tool.
-            - Do not make assumptions or fabricate information about external content.
-            - Provide detailed summaries or information as requested, ensuring accuracy by using the tools.
-
-            When rendering links or URLs, ensure they are clickable and accessible to the user.
-            """,
-        ),
-        additional_kwargs={},
-    )
-
-    human_message = HumanMessagePromptTemplate(
-        prompt=PromptTemplate(
-            input_variables=["input"],
-            input_types={},
-            partial_variables={},
-            template="{input}",
-        ),
-        additional_kwargs={},
-    )
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            system_message,
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
-            human_message,
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
-    )
-
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(
-        agent=agent, tools=tools, verbose=True, memory=memory
-    )
+    async_browser = create_async_playwright_browser()
+    print(f"Browser created: {async_browser}")
+    if not async_browser:
+        return jsonify({"error": "Playwright browser not initialized"}), 500
+    print("Creating browser context...")
     try:
         print("Entering try block...")
         # Await new_context and use the result as a context manager
