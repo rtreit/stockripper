@@ -55,12 +55,18 @@ function sendMessage() {
         botMessage.classList.add("markdown-content"); // Add markdown content class
         botMessage.innerHTML = marked.parse(agentMessage);
         botMessage.classList.add("fade-in");
-    
+
         // Append message to the chat box and auto-scroll
         chatBox.appendChild(botMessage);
+
+        // Add a separator for visual spacing between messages
+        const separator = document.createElement("p");
+        separator.innerHTML = "&nbsp;"; // Adding non-breaking space for spacing
+        chatBox.appendChild(separator);
+
+        // Auto-scroll to the bottom
         chatBox.scrollTop = chatBox.scrollHeight;
     })
-    
     .catch(error => {
         console.error("Error:", error);
         alert("An error occurred while sending the message. Please check the console for details.");
@@ -86,15 +92,4 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Call this function initially to scroll to the bottom when the page loads
     scrollToBottom();
-
-    // Optional: Use MutationObserver to auto-scroll whenever content changes
-    const observer = new MutationObserver(scrollToBottom);
-    observer.observe(chatBox, { childList: true });
-
-    // You can also call scrollToBottom() after manually appending messages, if applicable
-    // For example, if you have a function that appends new messages:
-    function appendMessage(message) {
-        chatBox.innerHTML += `<p>${message}</p>`; // Append new message
-        scrollToBottom(); // Scroll to bottom after adding a new message
-    }
 });
