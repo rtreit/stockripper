@@ -91,15 +91,7 @@
                                     "memoryInGb": 4
                                 }
                             },
-                            "environmentVariables": "[parameters('environmentVariables')]",
-                            "livenessProbe": {
-                                "httpGet": {
-                                    "path": "/health",
-                                    "port": 5000
-                                },
-                                "initialDelaySeconds": 3,
-                                "periodSeconds": 5
-                            }
+                            "environmentVariables": "[parameters('environmentVariables')]"
                         }
                     },
                     {
@@ -135,15 +127,7 @@
                                     "protocol": "TCP",
                                     "port": 80
                                 }                                
-                            ],
-                            "livenessProbe": {
-                                "httpGet": {
-                                    "path": "/health",
-                                    "port": 80
-                                },
-                                "initialDelaySeconds": 3,
-                                "periodSeconds": 5
-                            }
+                            ]
                         }
                     }
                 ],

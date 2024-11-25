@@ -44,6 +44,7 @@ def chat():
         response = requests.post(
             agent_url,
             json={"input": user_input, "session_id": session_id},
+            timeout=60
         )
         return jsonify(response.json())
     except Exception as e:
