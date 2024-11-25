@@ -26,20 +26,4 @@ if ($null -eq $containerGroups) {
     Write-Output "All container groups in resource group '$resourceGroupName' have been deleted."
 }
 
-# List all application gateways
-$appGateways = az network application-gateway list --resource-group $resourceGroupName --query "[].name" -o tsv
-
-if ($null -eq $appGateways) {
-    Write-Output "No application gateways found in resource group '$resourceGroupName'."
-} else {
-    # Iterate through each application gateway and delete it
-    foreach ($appGatewayName in $appGateways) {
-        Write-Output "Deleting the application gateway '$appGatewayName'..."
-        az network application-gateway delete --resource-group $resourceGroupName --name $appGatewayName
-        Write-Output "Application gateway '$appGatewayName' has been deleted."
-    }
-
-    Write-Output "All application gateways in resource group '$resourceGroupName' have been deleted."
-}
-
 Write-Output "Cleanup of container groups and application gateways in resource group '$resourceGroupName' is complete."
