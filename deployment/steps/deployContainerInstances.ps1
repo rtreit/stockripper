@@ -12,18 +12,6 @@ $location = if ($env:AZURE_LOCATION) { $env:AZURE_LOCATION } else {
     $locationFromRg
 }
 
-$vnetName = "stockripperVNet"
-$subnetName = "stockripperSubnet"
-
-# Retrieve subnet ID
-$subnetId = az network vnet subnet show --resource-group $resourceGroupName --vnet-name $vnetName --name $subnetName --query "id" -o tsv
-if (-not $subnetId) {
-    Write-Error "Could not retrieve the subnet ID. Please check that the VNet and Subnet exist."
-    exit 1
-}
-
-$dnsZoneName = "stockripper.internal"
-
 # Define image names
 $agentAppImageName = "$acrName.azurecr.io/stockripper-agent-app:latest"
 $fsharpAppImageName = "$acrName.azurecr.io/stockripper-fsharp-app:latest"
@@ -52,8 +40,30 @@ if (-not $acrUsername -or -not $acrPassword) {
     exit 1
 }
 
-# Define environment variables array (update with actual variables if needed)
+# Parse .env file into environment variable array
 $envVarsArray = @()
+if (Test-Path -Path "..\config\.env") {
+    Get-Content "..\config\.env" | ForEach-Object {
+        if ($_ -match "^(?<key>[^=]+)=(?<value>.*)$") {
+            $secureKeys = @("ALPACA_KEY","ALPACA_PAPER_API_KEY","ALPACA_PAPER_API_SECRET","ALPACA_SECRET","FINNHUB_API_KEY","OPENAI_API_KEY","AZURE_STORAGE_ACCOUNT_URL","COGNITIVE_SEARCH_ADMIN_KEY","STOCKRIPPER_CLIENT_SECRET","CLIENT_SECRET","REFRESH_TOKEN","BING_SUBSCRIPTION_KEY") # List sensitive variables here
+            if ($matches['key'] -in $secureKeys) {
+                $envVarsArray += @{
+                    name = $matches['key']
+                    secureValue = $matches['value'] # Use secureValue for sensitive variables
+                }
+            } else {
+                $envVarsArray += @{
+                    name = $matches['key']
+                    value = $matches['value'] # Use value for non-sensitive variables
+                }
+            }
+        }
+    }
+} else {
+    Write-Error "The .env file does not exist."
+    exit 1
+}
+
 
 function New-Parameters {
     param (
@@ -65,8 +75,8 @@ function New-Parameters {
         $envVarsArray,
         $acrUsername,
         $acrPassword,
-        $subnetId,
-        $uamiResourceId
+        $uamiResourceId,
+        $dnsNameLabel
     )
 
     return @{
@@ -80,7 +90,7 @@ function New-Parameters {
         environmentVariables = @{ "value" = @($envVarsArray) }
         acrUsername = @{ "value" = $acrUsername }
         acrPassword = @{ "value" = $acrPassword }
-        subnetId = @{ "value" = $subnetId }
+        dnsNameLabel = @{ "value" = $dnsNameLabel }
         identity = @{
             "value" = @{
                 type = "UserAssigned"
@@ -92,8 +102,10 @@ function New-Parameters {
     }
 }
 
-# Create consolidated parameters
 $containerGroupName = "stockripper-container-group"
+$dnsNameLabel = "stockripper"
+
+# Create consolidated parameters
 $containerGroupParameters = New-Parameters -containerGroupName $containerGroupName `
     -fsharpImage $fsharpAppImageName `
     -agentImage $agentAppImageName `
@@ -102,8 +114,8 @@ $containerGroupParameters = New-Parameters -containerGroupName $containerGroupNa
     -envVarsArray $envVarsArray `
     -acrUsername $acrUsername `
     -acrPassword $acrPassword `
-    -subnetId $subnetId `
-    -uamiResourceId $uamiResourceId
+    -uamiResourceId $uamiResourceId `
+    -dnsNameLabel $dnsNameLabel
 
 # Convert parameters to JSON and write to file
 $containerGroupParametersJson = $containerGroupParameters | ConvertTo-Json -Depth 10 -Compress
@@ -121,43 +133,4 @@ $containerGroup = az container show --resource-group $resourceGroupName --name $
 if (-not $containerGroup) {
     Write-Error "Could not retrieve the container group details."
     exit 1
-}
-
-function Add-DnsRecordIfNotExists($resourceGroupName, $dnsZoneName, $recordSetName, $ipAddress) {
-    try {
-        $existingIps = az network private-dns record-set a show `
-            --resource-group $resourceGroupName `
-            --zone-name $dnsZoneName `
-            --name $recordSetName `
-            --query "aRecords[*].ipv4Address" -o tsv 2>$null
-        $recordExists = $true
-    } catch {
-        $recordExists = $false
-        $existingIps = @()
-    }
-
-    if ($recordExists -and ($existingIps -contains $ipAddress)) {
-        Write-Output "IP address $ipAddress exists in the DNS record set $recordSetName."
-    } else {
-        if (-not $recordExists) {
-            Write-Output "DNS record set $recordSetName does not exist. Creating it."
-            az network private-dns record-set a create `
-                --resource-group $resourceGroupName `
-                --zone-name $dnsZoneName `
-                --name $recordSetName
-        }
-        Write-Output "Adding DNS record for $recordSetName with IP $ipAddress"
-        az network private-dns record-set a add-record `
-            --resource-group $resourceGroupName `
-            --zone-name $dnsZoneName `
-            --record-set-name $recordSetName `
-            --ipv4-address $ipAddress        
-    }
-}
-
-# Since all containers share the same IP in a container group, use container names
-$ipAddress = $containerGroup.ipAddress
-foreach ($container in $containerGroup.containers) {
-    $containerName = $container.name
-    Add-DnsRecordIfNotExists -resourceGroupName $resourceGroupName -dnsZoneName $dnsZoneName -recordSetName $containerName -ipAddress $ipAddress
 }

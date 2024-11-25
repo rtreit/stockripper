@@ -21,10 +21,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_community.retrievers import WikipediaRetriever, AzureAISearchRetriever
-from langchain.memory import (
-    VectorStoreRetrieverMemory,
-    ConversationBufferWindowMemory
-)
+from langchain.memory import VectorStoreRetrieverMemory, ConversationBufferWindowMemory
 from langchain.vectorstores.base import VectorStoreRetriever
 from langchain_core.documents import Document
 
@@ -640,7 +637,6 @@ def format_messages(messages):
     return "\n".join(formatted_messages)
 
 
-
 def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
     try:
         # Retrieve verbatim session history
@@ -661,7 +657,7 @@ def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
 
         print(f"\nInvoking agent with context for session {session_id}...")
         print(f"\Current User Request: {user_prompt}")
-        print(F"\nKnowledge Context: {rag_content}")
+        print(f"\nKnowledge Context: {rag_content}")
         print(f"\nRecent Verbatim History: {recent_history_text}")
         print(f"\nPast Conversation Summary: {session_history_content}")
 
@@ -685,7 +681,6 @@ def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
                 {"user_input": user_prompt}, {"output": agent_output}
             )
 
-
         # Generate a concise summary and store
         summarized_history = summarize_conversation(
             llm, session_history_content, user_prompt, agent_output
@@ -693,12 +688,18 @@ def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
         store_summary(memory_vector_store, session_id, summarized_history)
         prune_old_conversations(memory_vector_store, session_id)
 
-        #print("Current Memory Window:")
-        #print(memory_window.chat_memory.messages)
+        # print("Current Memory Window:")
+        # print(memory_window.chat_memory.messages)
         return result
     except Exception as e:
         logger.error(f"Error in call_agent_with_context: {str(e)}", exc_info=True)
         return {"error": str(e)}
+
+
+# add /health route for health checks
+@app.route("/health", methods=["GET"])
+def health_check():
+    return "OK", 200
 
 
 @app.route("/agents/mailworker", methods=["POST"])
@@ -746,7 +747,12 @@ def invoke_mailworker():
 
     human_message = HumanMessagePromptTemplate(
         prompt=PromptTemplate(
-            input_variables=["user_input", "knowledge_context", "recent_history", "chat_history"],
+            input_variables=[
+                "user_input",
+                "knowledge_context",
+                "recent_history",
+                "chat_history",
+            ],
             template="""
             Current User Request: {user_input}
             ** IMPORTANT: the above request is what I'd like you to respond to. What follows is additional context to help you understand my needs better, but you can ignore it if it's not relevant to my main request. **

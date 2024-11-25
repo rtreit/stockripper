@@ -10,7 +10,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # URL of the agent service
-AGENT_SERVICE_URL = os.getenv("AGENT_SERVICE_URL", "http://agent-container:5000/agents")
+AGENT_SERVICE_URL = os.getenv(
+    "AGENT_SERVICE_URL", "http://stockripper-agent-app:5000/agents"
+)
+
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    return "OK", 200
 
 
 @app.route("/")
@@ -45,4 +52,4 @@ def chat():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5004, debug=True)
+    app.run(host="0.0.0.0", port=80, debug=False)

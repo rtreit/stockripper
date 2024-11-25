@@ -1,6 +1,8 @@
 use actix_web::{get, App, HttpResponse, HttpServer, Responder};
 use serde::{Serialize, Deserialize};
 use reqwest;
+use uuid::Uuid;
+use tokio::time::{sleep, Duration};
 
 #[derive(Serialize, Deserialize)]
 struct HealthCheckResponse {
@@ -8,8 +10,14 @@ struct HealthCheckResponse {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ContainerListResponse {
-    containers: Vec<String>,
+struct MailWorkerRequest {
+    input: serde_json::Value,
+    session_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MailWorkerResponse {
+    status: String,
 }
 
 #[get("/health")]
@@ -20,50 +28,71 @@ async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(response)
 }
 
-#[get("/containers")]
-async fn container_check() -> impl Responder {
-    let response = HealthCheckResponse {
-        status: "Rust says: I am maybe healthy".to_string(),
+async fn call_mailworker() -> Result<(), String> {
+    let mailworker_url = "http://stockripper-agent-app:5000/agents/mailworker";
+    let session_id = Uuid::new_v4().to_string();
+
+    // Construct the `input` request for the agent
+    let input_request = "Hello from the Rust container! Look up the wikipedia article for a random number and send a summary to randyt@outlook.com with the subject 'Hello from Rust!' and explain that I (the Rust agent) called you with the request. Include any debugging details about the request you can glean as well as your process of solving the challenge.".to_string();
+
+    // Convert the input_request to serde_json::Value
+    let input_request_json = serde_json::json!(input_request);
+
+    // Build the full request to the mailworker
+    let request_body = MailWorkerRequest {
+        input: input_request_json,
+        session_id,
     };
-    HttpResponse::Ok().json(response)
-}
 
-#[get("/containertest")]
-async fn list_containers() -> impl Responder {
-    // Define the Python container's URL
-    let python_container_url = "http://stockripper-agent-app.stockripper.internal:5000/api/storage/containers";
+    let client = reqwest::Client::new();
 
-    // Make an HTTP GET request to the Python container
-    match reqwest::get(python_container_url).await {
-        Ok(response) => {
-            if response.status().is_success() {
-                // Parse the JSON response from the Python container
-                match response.json::<ContainerListResponse>().await {
-                    Ok(container_list) => HttpResponse::Ok().json(container_list),
-                    Err(err) => HttpResponse::InternalServerError()
-                        .body(format!("Failed to parse JSON response: {}", err)),
-                }
-            } else {
-                HttpResponse::InternalServerError().body(format!(
-                    "Python API responded with error: {}",
+    // Retry logic with a maximum of 5 attempts
+    for attempt in 1..=5 {
+        match client
+            .post(mailworker_url)
+            .json(&request_body)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                println!("Mailworker task submitted successfully.");
+                return Ok(());
+            }
+            Ok(response) => {
+                eprintln!(
+                    "Attempt {} failed: Mailworker API responded with status: {}",
+                    attempt,
                     response.status()
-                ))
+                );
+            }
+            Err(err) => {
+                eprintln!("Attempt {} failed: Error calling mailworker: {}", attempt, err);
             }
         }
-        Err(err) => HttpResponse::InternalServerError().body(format!(
-            "Failed to reach Python container API: {}",
-            err.to_string()
-        )),
+
+        // Wait for 5 seconds before the next attempt
+        if attempt < 5 {
+            sleep(Duration::from_secs(5)).await;
+            println!("Retrying... Attempt {}", attempt + 1);
+        }
     }
+
+    Err("Failed to call mailworker after 5 attempts.".to_string())
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // On startup, call the mailworker agent
+    tokio::spawn(async {
+        match call_mailworker().await {
+            Ok(_) => println!("Mailworker task initiated."),
+            Err(err) => eprintln!("Error calling mailworker: {}", err),
+        }
+    });
+
     HttpServer::new(|| {
         App::new()
             .service(health_check)
-            .service(container_check)
-            .service(list_containers)
     })
     .bind("0.0.0.0:5002")?
     .run()

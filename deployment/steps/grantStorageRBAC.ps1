@@ -1,6 +1,6 @@
 
-if (-not $env:AGENTIC_SUBSCRIPTION_ID) {
-    Write-Output "AGENTIC_SUBSCRIPTION_ID environment variable is not set."
+if (-not $env:AZURE_SUBSCRIPTION_ID) {
+    Write-Output "AZURE_SUBSCRIPTION_ID environment variable is not set."
     exit 1
 }
 
@@ -9,9 +9,9 @@ if (-not $env:MY_AZURE_OBJECT_ID) {
     exit 1
 }
 
-Write-Output "Setting subscription to $env:AGENTIC_SUBSCRIPTION_ID"
-az account set --subscription $env:AGENTIC_SUBSCRIPTION_ID
-$subscriptionId = $env:AGENTIC_SUBSCRIPTION_ID
+Write-Output "Setting subscription to $env:AZURE_SUBSCRIPTION_ID"
+az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+$subscriptionId = $env:AZURE_SUBSCRIPTION_ID
 $resourceGroupName = "stockripper"
 $storageAccountName = "stockripperstg"
 $uamiDetailsFile = ".\uami_details.json"

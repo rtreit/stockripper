@@ -2,21 +2,47 @@
     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": {
-        "containerGroupName": { "type": "string" },
-        "acrName": { "type": "string" },
-        "fsharpImage": { "type": "string" },
-        "agentImage": { "type": "string" },
-        "rustImage": { "type": "string" },
-        "chatInterfaceImage": { "type": "string" },
-        "location": { "type": "string" },
-        "environmentVariables": { "type": "array" },
-        "acrUsername": { "type": "string" },
-        "acrPassword": { "type": "securestring" },
-        "subnetId": { "type": "string" },
+        "containerGroupName": {
+            "type": "string"
+        },
+        "acrName": {
+            "type": "string"
+        },
+        "fsharpImage": {
+            "type": "string"
+        },
+        "agentImage": {
+            "type": "string"
+        },
+        "rustImage": {
+            "type": "string"
+        },
+        "chatInterfaceImage": {
+            "type": "string"
+        },
+        "location": {
+            "type": "string"
+        },
+        "environmentVariables": {
+            "type": "array"
+        },
+        "acrUsername": {
+            "type": "string"
+        },
+        "acrPassword": {
+            "type": "securestring"
+        },
+        "dnsNameLabel": {
+            "type": "string"
+        },        
         "identity": {
             "type": "object",
-            "defaultValue": { "type": "SystemAssigned" },
-            "metadata": { "description": "Identity configuration for the container instance." }
+            "defaultValue": {
+                "type": "SystemAssigned"
+            },
+            "metadata": {
+                "description": "Identity configuration for the container instance."
+            }
         }
     },
     "resources": [
@@ -27,12 +53,31 @@
             "location": "[parameters('location')]",
             "identity": "[if(equals(parameters('identity').type, 'UserAssigned'), parameters('identity'), json('{\"type\": \"SystemAssigned\"}'))]",
             "properties": {
+                "ipAddress": {
+                    "type": "Public",
+                    "dnsNameLabel": "[parameters('dnsNameLabel')]",
+                    "ports": [
+                        {
+                            "protocol": "TCP",
+                            "port": 80
+                        },                      
+                        {
+                            "protocol": "TCP",
+                            "port": 5004
+                        }                        
+                    ]
+                },                
                 "containers": [
                     {
                         "name": "fsharp-container",
                         "properties": {
                             "image": "[parameters('fsharpImage')]",
-                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
+                            "resources": {
+                                "requests": {
+                                    "cpu": 1,
+                                    "memoryInGb": 2
+                                }
+                            },
                             "environmentVariables": "[parameters('environmentVariables')]"
                         }
                     },
@@ -40,15 +85,33 @@
                         "name": "agent-container",
                         "properties": {
                             "image": "[parameters('agentImage')]",
-                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
-                            "environmentVariables": "[parameters('environmentVariables')]"
+                            "resources": {
+                                "requests": {
+                                    "cpu": 1,
+                                    "memoryInGb": 4
+                                }
+                            },
+                            "environmentVariables": "[parameters('environmentVariables')]",
+                            "livenessProbe": {
+                                "httpGet": {
+                                    "path": "/health",
+                                    "port": 5000
+                                },
+                                "initialDelaySeconds": 3,
+                                "periodSeconds": 5
+                            }
                         }
                     },
                     {
                         "name": "rust-container",
                         "properties": {
                             "image": "[parameters('rustImage')]",
-                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
+                            "resources": {
+                                "requests": {
+                                    "cpu": 1,
+                                    "memoryInGb": 2
+                                }
+                            },
                             "environmentVariables": "[parameters('environmentVariables')]"
                         }
                     },
@@ -56,15 +119,35 @@
                         "name": "chat-container",
                         "properties": {
                             "image": "[parameters('chatInterfaceImage')]",
-                            "resources": { "requests": { "cpu": 1, "memoryInGb": 1 } },
-                            "environmentVariables": "[parameters('environmentVariables')]"
+                            "resources": {
+                                "requests": {
+                                    "cpu": 1,
+                                    "memoryInGb": 2
+                                }
+                            },
+                            "environmentVariables": "[parameters('environmentVariables')]",
+                            "ports": [
+                                {
+                                    "protocol": "TCP",
+                                    "port": 5004
+                                },
+                                {
+                                    "protocol": "TCP",
+                                    "port": 80
+                                }                                
+                            ],
+                            "livenessProbe": {
+                                "httpGet": {
+                                    "path": "/health",
+                                    "port": 80
+                                },
+                                "initialDelaySeconds": 3,
+                                "periodSeconds": 5
+                            }
                         }
-                    }                    
+                    }
                 ],
                 "osType": "Linux",
-                "subnetIds": [
-                    { "id": "[parameters('subnetId')]" }
-                ],
                 "imageRegistryCredentials": [
                     {
                         "server": "[concat(parameters('acrName'), '.azurecr.io')]",
