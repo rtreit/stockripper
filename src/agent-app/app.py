@@ -6,7 +6,7 @@ import json
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 import requests
-
+from collections import defaultdict
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings, AzureChatOpenAI
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -244,7 +244,7 @@ memory = VectorStoreRetrieverMemory(
     return_docs=False,
 )
 
-memory_window = ConversationBufferWindowMemory(
+global_memory_window = ConversationBufferWindowMemory(
     memory_key="chat_history",
     input_key="user_input",
     output_key="output",
@@ -252,6 +252,15 @@ memory_window = ConversationBufferWindowMemory(
     return_messages=True,
 )
 
+session_memory_windows = defaultdict(
+    lambda: ConversationBufferWindowMemory(
+        memory_key="chat_history",
+        input_key="user_input",
+        output_key="output",
+        k=5,  # Keep the last 5 exchanges
+        return_messages=True,
+    )
+)
 
 # add tools
 def refresh_auth_token():
@@ -633,13 +642,27 @@ def prune_old_conversations(vector_store, session_id, keep_latest=1):
 def format_messages(messages):
     formatted_messages = []
     for message in messages:
-        formatted_messages.append(message.content)
-    return "\n".join(formatted_messages)
+        if isinstance(message, (HumanMessage, AIMessage)):
+            formatted_messages.append({"type": type(message).__name__, "content": message.content})
+        else:
+            formatted_messages.append(str(message))
+    return formatted_messages
+
 
 
 def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
     try:
-        # Retrieve verbatim session history
+        # Get or create a memory window for this session_id
+        session_memory_window = session_memory_windows[session_id]
+
+        # Retrieve verbatim session history from memory window
+        recent_history_text = format_messages(session_memory_window.chat_memory.messages)
+
+        # Retrieve relevant context using RAG
+        rag_results = rag_vector_store.similarity_search(user_prompt, k=3)
+        rag_content = "\n".join([doc.page_content for doc in rag_results])
+
+        # Retrieve long-term memory (summaries) from the vector store
         filter_expression = f"session_id eq '{session_id}'"
         session_history_docs = list(
             memory_search_client.search(search_text="", filter=filter_expression)
@@ -650,17 +673,13 @@ def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
             else ""
         )
 
-        # Retrieve relevant context using RAG
-        rag_results = rag_vector_store.similarity_search(user_prompt, k=3)
-        rag_content = "\n".join([doc.page_content for doc in rag_results])
-        recent_history_text = format_messages(memory_window.chat_memory.messages)
-
         print(f"\nInvoking agent with context for session {session_id}...")
         print(f"\Current User Request: {user_prompt}")
         print(f"\nKnowledge Context: {rag_content}")
         print(f"\nRecent Verbatim History: {recent_history_text}")
         print(f"\nPast Conversation Summary: {session_history_content}")
 
+        # Invoke the agent with the contextual information
         result = agent_executor.invoke(
             {
                 "user_input": user_prompt,
@@ -674,22 +693,18 @@ def call_agent_with_context(agent_executor, llm, user_prompt, session_id):
         if hasattr(agent_output, "content"):
             agent_output = agent_output.content
 
-        # Save verbatim interaction to memory
-        # Before saving context, ensure no duplication
-        if memory_window.chat_memory.messages[-1].content != agent_output:
-            memory_window.save_context(
-                {"user_input": user_prompt}, {"output": agent_output}
-            )
+        # Save verbatim interaction to session-specific memory
+        session_memory_window.save_context(
+            {"user_input": user_prompt}, {"output": agent_output}
+        )
 
-        # Generate a concise summary and store
+        # Generate a concise summary and store in long-term memory
         summarized_history = summarize_conversation(
             llm, session_history_content, user_prompt, agent_output
         )
         store_summary(memory_vector_store, session_id, summarized_history)
         prune_old_conversations(memory_vector_store, session_id)
 
-        # print("Current Memory Window:")
-        # print(memory_window.chat_memory.messages)
         return result
     except Exception as e:
         logger.error(f"Error in call_agent_with_context: {str(e)}", exc_info=True)
@@ -774,7 +789,7 @@ def invoke_mailworker():
 
     agent = create_tool_calling_agent(llm, tools, prompt)
     agent_executor = AgentExecutor(
-        agent=agent, tools=tools, verbose=True, memory=memory_window
+        agent=agent, tools=tools, verbose=True, memory=global_memory_window
     )
 
     try:
@@ -786,16 +801,23 @@ def invoke_mailworker():
             return jsonify({"error": "Missing 'input' parameter in request body"}), 400
         if not session_id:
             return (
-                jsonify({"error": "Missing 'session_id' parameter in request body"}),
-                400,
+                jsonify({"error": "Missing 'session_id' parameter in request body"}), 400
             )
+
+        # Get or create a memory window for this session_id
+        memory_window = session_memory_windows[session_id]
+
+        # Create agent with session-specific memory
+        agent_executor = AgentExecutor(
+            agent=agent, tools=tools, verbose=True, memory=memory_window
+        )
 
         # Invoke the agent with memory and RAG context
         result = call_agent_with_context(agent_executor, llm, user_prompt, session_id)
 
         # Ensure the result is JSON-serializable
         if isinstance(result, dict):
-            serializable_result = {k: str(v) for k, v in result.items()}
+            serializable_result = {k: (format_messages(v) if isinstance(v, list) else str(v)) for k, v in result.items()}
         else:
             serializable_result = {"output": str(result)}
 
