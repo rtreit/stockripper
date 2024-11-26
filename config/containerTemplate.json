@@ -69,7 +69,7 @@
                 },                
                 "containers": [
                     {
-                        "name": "fsharp-container",
+                        "name": "stockripper-fsharp-app",
                         "properties": {
                             "image": "[parameters('fsharpImage')]",
                             "resources": {
@@ -82,7 +82,7 @@
                         }
                     },
                     {
-                        "name": "agent-container",
+                        "name": "stockripper-agent-app",
                         "properties": {
                             "image": "[parameters('agentImage')]",
                             "resources": {
@@ -95,7 +95,7 @@
                         }
                     },
                     {
-                        "name": "rust-container",
+                        "name": "stockripper-rust-app",
                         "properties": {
                             "image": "[parameters('rustImage')]",
                             "resources": {
@@ -108,7 +108,7 @@
                         }
                     },
                     {
-                        "name": "chat-container",
+                        "name": "stockripper-chat-app",
                         "properties": {
                             "image": "[parameters('chatInterfaceImage')]",
                             "resources": {
