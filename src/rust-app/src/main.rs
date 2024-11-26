@@ -29,7 +29,7 @@ async fn health_check() -> impl Responder {
 }
 
 async fn call_mailworker() -> Result<(), String> {
-    let mailworker_url = "http://stockripper-agent-app:5000/agents/mailworker";
+    let mailworker_url = "http://localhost:5000/agents/mailworker";
     let session_id = Uuid::new_v4().to_string();
 
     // Construct the `input` request for the agent

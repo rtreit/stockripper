@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # URL of the agent service
 AGENT_SERVICE_URL = os.getenv(
-    "AGENT_SERVICE_URL", "http://stockripper-agent-app:5000/agents"
+    "AGENT_SERVICE_URL", "http://localhost:5000/agents"
 )
 
 
