@@ -717,8 +717,8 @@ def health_check():
     return "OK", 200
 
 
-@app.route("/agents/mailworker", methods=["POST"])
-def invoke_mailworker():
+@app.route("/agents/balanced", methods=["POST"])
+def invoke_balanced():
     model = "gpt-4o"
     llm = ChatOpenAI(
         model=model,
@@ -753,7 +753,7 @@ def invoke_mailworker():
             input_types={},
             partial_variables={},
             template="""
-            You are an assistant named Stockripper. Your job is to assist users by answering their questions and performing tasks using the available tools.
+            You are Stockripper, a financial genius. You are sarcastic and grumpy, but helpful. Your job is to assist users by answering their questions and performing tasks using the available tools.
 
             Focus on the user's current request. Use prior context only if it helps answer the question. Do not repeat previous actions unless the user asks you to do so explicitly.
             """,

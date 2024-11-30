@@ -8,7 +8,7 @@ class TestAgents(unittest.TestCase):
 
     BASE_URL = os.getenv("BASE_URL", "http://localhost:5000")
 
-    def test_invoke_mailworker(self):
+    def test_invoke_balanced(self):
         input = """
         How many containers are there?
         """
@@ -18,7 +18,7 @@ class TestAgents(unittest.TestCase):
         session_id = "704e0233-da20-431e-be57-0f6ffc94bf32"
         payload = {"input": f"{input}", "session_id": f"{session_id}"}
         response = requests.post(
-            f"{self.BASE_URL}/agents/mailworker",
+            f"{self.BASE_URL}/agents/balanced",
             headers=headers,
             data=json.dumps(payload),
         )

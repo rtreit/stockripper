@@ -38,7 +38,7 @@ function sendMessage() {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            agent_name: "mailworker",
+            agent_name: "balanced",
             input: userInput,
             session_id: getSessionId()
         })

@@ -702,8 +702,8 @@ def health_check():
     return "OK", 200
 
 
-@app.route("/agents/mailworker", methods=["POST"])
-def invoke_mailworker():
+@app.route("/agents/balanced", methods=["POST"])
+def invoke_balanced():
     model = "gpt-4o"
     llm = ChatOpenAI(
         model=model,

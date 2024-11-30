@@ -28,8 +28,8 @@ async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(response)
 }
 
-async fn call_mailworker() -> Result<(), String> {
-    let mailworker_url = "http://localhost:5000/agents/mailworker";
+async fn call_balanced() -> Result<(), String> {
+    let balanced_url = "http://localhost:5000/agents/balanced";
     let session_id = Uuid::new_v4().to_string();
 
     // Construct the `input` request for the agent
@@ -38,7 +38,7 @@ async fn call_mailworker() -> Result<(), String> {
     // Convert the input_request to serde_json::Value
     let input_request_json = serde_json::json!(input_request);
 
-    // Build the full request to the mailworker
+    // Build the full request to the balanced
     let request_body = MailWorkerRequest {
         input: input_request_json,
         session_id,
@@ -49,7 +49,7 @@ async fn call_mailworker() -> Result<(), String> {
     // Retry logic with a maximum of 5 attempts
     for attempt in 1..=5 {
         match client
-            .post(mailworker_url)
+            .post(balanced_url)
             .json(&request_body)
             .send()
             .await
@@ -66,7 +66,7 @@ async fn call_mailworker() -> Result<(), String> {
                 );
             }
             Err(err) => {
-                eprintln!("Attempt {} failed: Error calling mailworker: {}", attempt, err);
+                eprintln!("Attempt {} failed: Error calling balanced: {}", attempt, err);
             }
         }
 
@@ -77,16 +77,16 @@ async fn call_mailworker() -> Result<(), String> {
         }
     }
 
-    Err("Failed to call mailworker after 5 attempts.".to_string())
+    Err("Failed to call balanced after 5 attempts.".to_string())
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // On startup, call the mailworker agent
+    // On startup, call the balanced agent
     tokio::spawn(async {
-        match call_mailworker().await {
+        match call_balanced().await {
             Ok(_) => println!("Mailworker task initiated."),
-            Err(err) => eprintln!("Error calling mailworker: {}", err),
+            Err(err) => eprintln!("Error calling balanced: {}", err),
         }
     });
 
