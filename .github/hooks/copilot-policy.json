@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "pre-tool": [
+      {
+        "script": ".github/hooks/scripts/pre-tool-policy.ps1",
+        "tools": ["edit", "create"],
+        "description": "Validates edited files for secrets and unsafe StockRipper coding patterns."
+      }
+    ],
+    "post-tool": [
+      {
+        "script": ".github/hooks/scripts/post-build-check.ps1",
+        "tools": ["powershell"],
+        "description": "Checks that Python tasks use uv and keeps StockRipper quality tooling visible."
+      }
+    ]
+  }
+}

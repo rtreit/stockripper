@@ -1,0 +1,76 @@
+name: Python Quality
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/python-quality.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/stockripper/**"
+      - "tests/**"
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: python-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Sync dependencies
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: uv sync --dev
+
+      - name: Check lockfile consistency
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: uv lock --check
+
+      - name: Lint with ruff
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: uv run ruff check .
+
+      - name: Type check with mypy
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: |
+          if [ -d src/stockripper ] && [ -d tests ]; then
+            uv run mypy src/stockripper tests
+          else
+            echo "No source tree or tests yet; skipping mypy."
+          fi
+
+      - name: Run pytest with coverage
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: |
+          if [ -d src/stockripper ] && [ -d tests ]; then
+            uv run pytest --cov=src/stockripper --cov-report=term-missing --cov-report=xml
+          else
+            echo "No source tree or tests yet; skipping pytest coverage."
+          fi
+
+      - name: Skip Python checks until the project skeleton is present
+        if: ${{ hashFiles('pyproject.toml') == '' }}
+        run: echo "No pyproject.toml yet; skipping Python quality checks until the StockRipper package skeleton lands."

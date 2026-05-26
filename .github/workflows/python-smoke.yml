@@ -1,0 +1,62 @@
+name: Python Smoke
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    paths:
+      - ".github/workflows/python-smoke.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/stockripper/**"
+      - "tests/**"
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  python-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Sync dependencies when available
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: uv sync --dev
+
+      - name: Compile the package tree
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: |
+          if [ -d src/stockripper ]; then
+            uv run python -m compileall src/stockripper
+          else
+            echo "No source tree yet; skipping compileall."
+          fi
+
+      - name: Collect tests if they exist
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: |
+          if [ -d tests ]; then
+            uv run pytest --collect-only -q
+          else
+            echo "No tests directory yet; skipping test collection."
+          fi
+
+      - name: Skip smoke checks until the project skeleton is present
+        if: ${{ hashFiles('pyproject.toml') == '' }}
+        run: echo "No pyproject.toml yet; skipping smoke checks until the StockRipper package skeleton lands."
