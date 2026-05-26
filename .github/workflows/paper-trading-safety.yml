@@ -1,0 +1,68 @@
+name: Paper Trading Safety
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/paper-trading-safety.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/stockripper/**"
+      - "tests/**"
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: paper-trading-safety-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  paper-trading-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Sync dependencies
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: uv sync --dev
+
+      - name: Run focused safety and replay tests
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: |
+          if [ -d tests/risk ] || [ -d tests/replay ] || [ -d tests/integration ]; then
+            uv run pytest tests/risk tests/replay tests/integration -m "not live" --maxfail=1
+          else
+            echo "No focused safety or replay tests found yet."
+          fi
+
+      - name: Sanity-check the package tree
+        if: ${{ hashFiles('pyproject.toml') != '' }}
+        run: |
+          if [ -d src/stockripper ]; then
+            uv run python -m compileall src/stockripper
+          else
+            echo "No source tree yet; skipping compileall."
+          fi
+
+      - name: Skip safety checks until the project skeleton is present
+        if: ${{ hashFiles('pyproject.toml') == '' }}
+        run: echo "No pyproject.toml yet; skipping paper-trading safety checks until the StockRipper package skeleton lands."

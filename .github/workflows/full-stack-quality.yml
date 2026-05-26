@@ -1,0 +1,22 @@
+name: StockRipper Quality
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  python-quality:
+    name: Python Quality
+    uses: ./.github/workflows/python-quality.yml
+
+  paper-trading-safety:
+    name: Paper Trading Safety
+    uses: ./.github/workflows/paper-trading-safety.yml
+
+  python-smoke:
+    name: Python Smoke
+    uses: ./.github/workflows/python-smoke.yml
