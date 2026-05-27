@@ -104,6 +104,18 @@ def schema_content_hash(schema: type[BaseModel]) -> str:
 _DEFAULT_TEMPERATURE: Final[float] = 0.0
 
 
+def _model_supports_sampling_params(model_id: str) -> bool:
+    """Whether a model accepts ``temperature`` / ``top_p`` on the Responses API.
+
+    The gpt-5 family (gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-turbo, ...) and
+    the o-series reasoning models reject these parameters; everything else
+    is assumed to accept them.
+    """
+
+    lowered = model_id.lower()
+    return not (lowered.startswith(("gpt-5", "o1", "o3", "o4")))
+
+
 class OpenAIStructuredClient:
     """Production implementation. Uses the structured-output API."""
 
@@ -145,16 +157,31 @@ class OpenAIStructuredClient:
             schema_content_hash=schema_content_hash,
             input_content_hash=input_content_hash,
         )
+        extra: dict[str, Any] = {}
+        if _model_supports_sampling_params(chosen_model):
+            extra["temperature"] = temperature
+            extra["top_p"] = top_p
+            if seed is not None:
+                extra["seed"] = seed
         started = time.perf_counter()
-        response: Any = self._client.responses.parse(
-            model=chosen_model,
-            input=prompt,
-            text_format=schema,
-            temperature=temperature,
-            top_p=top_p,
-            **({"seed": seed} if seed is not None else {}),
-            metadata={"agent_id": agent_id, "fingerprint": digest[:32]},
-        )
+        try:
+            response: Any = self._client.responses.parse(
+                model=chosen_model,
+                input=prompt,
+                text_format=schema,
+                metadata={"agent_id": agent_id, "fingerprint": digest[:32]},
+                **extra,
+            )
+        except Exception as exc:
+            # BaseAgent.run() only catches ValueError/KeyError/RuntimeError when
+            # mapping LLM failures to AgentRunStatus.QUARANTINED. The OpenAI
+            # client raises its own exception types (BadRequestError, etc.) for
+            # transport, schema, and rate-limit errors; wrap them so agents
+            # degrade gracefully instead of crashing the orchestrator.
+            raise RuntimeError(
+                f"OpenAI structured call failed for agent_id={agent_id!r} "
+                f"model={chosen_model!r}: {exc}"
+            ) from exc
         latency_ms = int((time.perf_counter() - started) * 1000)
         parsed = response.output_parsed
         if parsed is None:
@@ -165,7 +192,7 @@ class OpenAIStructuredClient:
             parsed.model_dump(mode="json"), default=str
         )
         finish = "stop"
-        with contextlib.suppress(AttributeError, IndexError):
+        with contextlib.suppress(AttributeError, IndexError, TypeError):
             finish = response.output[0].content[0].finish_reason or "stop"
         return StructuredResponse(
             parsed=parsed,

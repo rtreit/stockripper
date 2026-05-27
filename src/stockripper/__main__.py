@@ -12,6 +12,7 @@ import datetime as dt
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import typer
 from alembic import command as alembic_command
@@ -663,6 +664,193 @@ def prompts_show(
     console.print(f"[bold]rendered_content_hash[/bold]: {tmpl.rendered_content_hash}")
     console.print("---")
     console.print(tmpl.render(include_preamble=with_preamble))
+
+
+# ---------------------------------------------------------------------------
+# agents run-track (Phase 4 minimal-slice orchestrator)
+# ---------------------------------------------------------------------------
+@agents_app.command("run-track")
+def agents_run_track(
+    track_id: str = typer.Argument(..., help="Track to run (e.g. balanced, yolo, benchmark)."),
+    symbol: list[str] = typer.Option(  # noqa: B008 - typer pattern
+        ["SPY"], "--symbol", "-s",
+        help="One or more symbols. The orchestrator runs once per symbol.",
+    ),
+    fake: bool = typer.Option(
+        True, "--fake/--no-fake",
+        help="Use the offline CannedCouncilLLM. Pass --no-fake to call real OpenAI.",
+    ),
+    seed: int | None = typer.Option(
+        None, "--seed", help="Optional rng_seed propagated to every agent run."
+    ),
+) -> None:
+    """Run one (track, symbol) collaborative cycle and print the judge's plan.
+
+    Default mode uses the canned offline LLM so council + skeptic + risk +
+    judge all execute end-to-end without network. Pass ``--no-fake`` to use
+    real OpenAI; the judge uses ``OPENAI_MODEL_JUDGE`` and every other agent
+    uses ``OPENAI_MODEL_DEFAULT``.
+    """
+
+    from stockripper.agents.canned_llm import CannedCouncilLLM
+    from stockripper.agents.demo import build_demo_packet
+    from stockripper.agents.llm import LLMClient, OpenAIStructuredClient
+    from stockripper.agents.orchestrator import run_track
+    from stockripper.agents.registry import build_registry
+
+    registry = build_registry()
+    if track_id not in registry.bindings:
+        console.print(f"[red]unknown track: {track_id}[/red]")
+        raise typer.Exit(code=1)
+
+    llm: LLMClient | None = None
+    binding = registry.bindings[track_id]
+    if fake:
+        llm = CannedCouncilLLM()
+        console.print("[yellow]offline mode: using CannedCouncilLLM[/yellow]")
+    elif binding.is_llm_track:
+        settings = load_settings()
+        llm = OpenAIStructuredClient(
+            api_key=settings.openai_api_key.get_secret_value(),
+            default_model=settings.openai_model_default,
+        )
+        for judge in registry.judges.values():
+            judge.model_id_override = settings.openai_model_judge
+        console.print(
+            f"[green]live mode: agents={settings.openai_model_default} "
+            f"judge={settings.openai_model_judge}[/green]"
+        )
+
+    async def _run_all() -> None:
+        for sym in symbol:
+            packet = build_demo_packet(symbol=sym, track_id=track_id)
+            result = await run_track(
+                registry=registry,
+                track_id=track_id,
+                packet=packet,
+                llm=llm,
+                rng_seed=seed,
+            )
+            _print_track_run_result(result)
+
+    asyncio.run(_run_all())
+
+
+def _print_track_run_result(result: Any) -> None:
+    from stockripper.agents.schemas import (
+        AgentRecommendation,
+        AgentRunStatus,
+    )
+
+    console.print()
+    console.print(
+        f"[bold cyan]Track run[/bold cyan] track={result.track_id} "
+        f"symbol={result.packet.symbol} window={result.window_id} "
+        f"run_id={result.run_id}"
+    )
+
+    if result.market_climate is not None:
+        mc = result.market_climate
+        console.print(
+            f"  [blue]market_climate[/blue]: regime={mc.regime.value} "
+            f"breadth={mc.breadth_score} volatility={mc.volatility_score}"
+        )
+
+    council_table = Table(title=f"Council ({len(result.council_runs)} runs)")
+    council_table.add_column("agent_id")
+    council_table.add_column("status")
+    council_table.add_column("action")
+    council_table.add_column("instrument")
+    council_table.add_column("conviction", justify="right")
+    council_table.add_column("notes", overflow="fold")
+    for run in result.council_runs:
+        if (
+            run.status == AgentRunStatus.OK
+            and isinstance(run.output, AgentRecommendation)
+        ):
+            rec = run.output
+            council_table.add_row(
+                run.agent_id,
+                run.status.value,
+                rec.action.value,
+                rec.instrument.value,
+                str(rec.conviction),
+                rec.thesis[:90],
+            )
+        else:
+            council_table.add_row(
+                run.agent_id, run.status.value, "-", "-", "-",
+                (run.quarantine_reason or "")[:90],
+            )
+    console.print(council_table)
+
+    if result.skeptic_run is not None:
+        sk = result.skeptic_run
+        if result.skeptic_report is not None:
+            console.print(
+                f"  [magenta]skeptic[/magenta]: status={sk.status.value} "
+                f"critiques={len(result.skeptic_report.critiques)}"
+            )
+        else:
+            console.print(
+                f"  [red]skeptic quarantined[/red]: {sk.quarantine_reason}"
+            )
+
+    if result.risk_run is not None:
+        rm = result.risk_run
+        if result.risk_report is not None:
+            console.print(
+                f"  [magenta]risk_manager[/magenta]: status={rm.status.value} "
+                f"assessments={len(result.risk_report.assessments)} "
+                f"portfolio_flags={len(result.risk_report.portfolio_level_flags)}"
+            )
+        else:
+            console.print(
+                f"  [red]risk_manager quarantined[/red]: {rm.quarantine_reason}"
+            )
+
+    judge = result.judge_run
+    decision = result.judge_decision
+    if decision is None:
+        console.print(
+            f"  [red]judge quarantined[/red]: {judge.quarantine_reason}"
+        )
+        return
+    plan = decision.plan
+    console.print(
+        f"  [bold green]judge[/bold green] {plan.judge_agent_id} "
+        f"posture={plan.portfolio_posture.value} "
+        f"objective={plan.objective_label} items={len(plan.items)}"
+    )
+    console.print(f"  rationale: {plan.rationale[:180]}")
+    if plan.items:
+        items_table = Table(title=f"Action items ({len(plan.items)})")
+        items_table.add_column("symbol")
+        items_table.add_column("side")
+        items_table.add_column("instrument")
+        items_table.add_column("size", justify="right")
+        items_table.add_column("rationale", overflow="fold")
+        for item in plan.items:
+            size_text = (
+                f"${item.target_notional_usd}"
+                if item.target_notional_usd is not None
+                else f"{item.target_pct_equity}*equity"
+                if item.target_pct_equity is not None
+                else "-"
+            )
+            items_table.add_row(
+                item.symbol,
+                item.side.value,
+                item.instrument.value,
+                size_text,
+                item.rationale[:80],
+            )
+        console.print(items_table)
+
+    if result.quarantined_runs:
+        console.print(
+            f"  [yellow]quarantined runs: {len(result.quarantined_runs)}[/yellow]"
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover - typer dispatch
