@@ -42,12 +42,16 @@ universe_app = typer.Typer(help="Candidate universe construction and inspection.
 research_app = typer.Typer(help="Per-symbol research probes (fundamentals, news).")
 agents_app = typer.Typer(help="Inspect the Phase-3 agent graph (council, judges, baselines).")
 prompts_app = typer.Typer(help="Inspect the content-addressed prompt registry.")
+kill_app = typer.Typer(help="Global kill-switch (halt every track immediately).")
+track_app = typer.Typer(help="Per-track pause control.")
 app.add_typer(db_app, name="db")
 app.add_typer(tracks_app, name="tracks")
 app.add_typer(universe_app, name="universe")
 app.add_typer(research_app, name="research")
 app.add_typer(agents_app, name="agents")
 app.add_typer(prompts_app, name="prompts")
+app.add_typer(kill_app, name="kill")
+app.add_typer(track_app, name="track")
 console = Console()
 
 
@@ -855,4 +859,274 @@ def _print_track_run_result(result: Any) -> None:
 
 if __name__ == "__main__":  # pragma: no cover - typer dispatch
     app()
+
+
+# ---------------------------------------------------------------------------
+# Kill switch (global halt)
+# ---------------------------------------------------------------------------
+def _kill_switch_factory(database_url: str | None) -> Any:
+    from sqlalchemy.orm import sessionmaker
+
+    engine = build_engine(database_url)
+    return sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+
+@kill_app.command("on")
+def kill_on(
+    reason: str = typer.Argument(..., help="Why are we halting?"),
+    by: str | None = typer.Option(None, "--by", help="Operator id or username."),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Engage the global kill-switch. Every track aborts on its next window."""
+
+    from stockripper.db.repository import Repository
+
+    factory = _kill_switch_factory(database_url)
+    with session_scope(factory) as session:
+        repo = Repository(session)
+        state = repo.engage_kill_switch(reason=reason, engaged_by=by)
+        console.print(
+            f"[bold red]KILL SWITCH ENGAGED[/] reason={state.reason!r} by={state.engaged_by!r} "
+            f"at={state.engaged_at!s}"
+        )
+
+
+@kill_app.command("off")
+def kill_off(
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Release the global kill-switch."""
+
+    from stockripper.db.repository import Repository
+
+    factory = _kill_switch_factory(database_url)
+    with session_scope(factory) as session:
+        repo = Repository(session)
+        state = repo.release_kill_switch()
+        console.print(
+            f"[bold green]kill switch released[/] updated_at={state.updated_at!s}"
+        )
+
+
+@kill_app.command("status")
+def kill_status(
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Print kill-switch status."""
+
+    from stockripper.db.repository import Repository
+
+    factory = _kill_switch_factory(database_url)
+    with session_scope(factory) as session:
+        repo = Repository(session)
+        state = repo.get_kill_switch()
+        if state.engaged:
+            console.print(
+                f"[bold red]ENGAGED[/] reason={state.reason!r} by={state.engaged_by!r} "
+                f"at={state.engaged_at!s}"
+            )
+        else:
+            console.print(
+                f"[bold green]not engaged[/] last_updated={state.updated_at!s}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Per-track pause control
+# ---------------------------------------------------------------------------
+@track_app.command("pause")
+def track_pause(
+    track_id: str = typer.Argument(..., help="track_id to pause."),
+    reason: str = typer.Option("manual", "--reason", help="Why is this track paused?"),
+    by: str | None = typer.Option(None, "--by", help="Operator id or username."),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Pause one track; future windows skip it until resumed."""
+
+    from stockripper.db.repository import Repository
+
+    factory = _kill_switch_factory(database_url)
+    with session_scope(factory) as session:
+        repo = Repository(session)
+        state = repo.pause_track(track_id=track_id, reason=reason, paused_by=by)
+        console.print(
+            f"[yellow]paused[/] track={state.track_id} reason={state.reason!r} "
+            f"by={state.paused_by!r} at={state.paused_at!s}"
+        )
+
+
+@track_app.command("resume")
+def track_resume(
+    track_id: str = typer.Argument(..., help="track_id to resume."),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Resume a previously-paused track."""
+
+    from stockripper.db.repository import Repository
+
+    factory = _kill_switch_factory(database_url)
+    with session_scope(factory) as session:
+        repo = Repository(session)
+        state = repo.resume_track(track_id=track_id)
+        console.print(
+            f"[green]resumed[/] track={state.track_id} updated_at={state.updated_at!s}"
+        )
+
+
+@track_app.command("status")
+def track_status(
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Print all known pause state rows."""
+
+    from stockripper.db.repository import Repository
+
+    factory = _kill_switch_factory(database_url)
+    with session_scope(factory) as session:
+        repo = Repository(session)
+        rows = repo.list_track_pause_states()
+    if not rows:
+        console.print("[dim]No pause state rows recorded.[/dim]")
+        return
+    table = Table(title="Track pause state")
+    table.add_column("track_id", style="bold cyan")
+    table.add_column("paused", justify="center")
+    table.add_column("reason")
+    table.add_column("by")
+    table.add_column("paused_at")
+    table.add_column("updated_at")
+    for row in rows:
+        table.add_row(
+            row.track_id,
+            "[red]✓[/]" if row.paused else "[green]✗[/]",
+            (row.reason or "") if row.paused else "",
+            row.paused_by or "",
+            str(row.paused_at) if row.paused_at else "",
+            str(row.updated_at),
+        )
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Multi-track window runner
+# ---------------------------------------------------------------------------
+@agents_app.command("run-window")
+def agents_run_window(
+    track: list[str] = typer.Option(  # noqa: B008 - typer pattern
+        [], "--track", "-t",
+        help="Restrict to specific track_ids. Defaults to every enabled track.",
+    ),
+    symbol: list[str] = typer.Option(  # noqa: B008 - typer pattern
+        ["SPY"], "--symbol", "-s",
+        help="One or more symbols. The runner fans out (track x symbol) in parallel.",
+    ),
+    window_label: str = typer.Option(
+        "adhoc", "--window-label", help="Window label (e.g. opening, midday, close).",
+    ),
+    fake: bool = typer.Option(
+        True, "--fake/--no-fake",
+        help="Use the offline CannedCouncilLLM. Pass --no-fake to call real OpenAI.",
+    ),
+    persist: bool = typer.Option(
+        True, "--persist/--no-persist",
+        help="When --persist, write run/track/agent rows to the DB (default).",
+    ),
+    seed: int | None = typer.Option(
+        None, "--seed", help="rng_seed propagated to every agent run.",
+    ),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Run every (track, symbol) pair in parallel via the Strategy Tracks Manager.
+
+    Honors the global kill-switch and per-track pause state. Without
+    ``--persist`` no DB writes happen — useful for offline demos.
+    """
+
+    from sqlalchemy.orm import sessionmaker
+
+    from stockripper.agents.llm import LLMClient, OpenAIStructuredClient
+    from stockripper.agents.registry import build_registry
+    from stockripper.agents.window_runner import run_window
+
+    registry = build_registry()
+    track_ids = (
+        tuple(track) if track
+        else tuple(t.track_id for t in DEFAULT_TRACKS if t.enabled)
+    )
+    symbols = tuple(s.upper() for s in symbol)
+
+    factory = None
+    if persist:
+        engine = build_engine(database_url)
+        factory = sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+    if fake:
+        console.print("[yellow]offline mode: using CannedCouncilLLM per coroutine[/yellow]")
+        llm_factory = None
+    else:
+        settings = load_settings()
+        api_key = settings.openai_api_key.get_secret_value()
+        default_model = settings.openai_model_default
+        judge_model = settings.openai_model_judge
+        for judge in registry.judges.values():
+            judge.model_id_override = judge_model
+        console.print(
+            f"[green]live mode: agents={default_model} judge={judge_model}[/green]"
+        )
+
+        def llm_factory(_packet: Any) -> LLMClient | None:
+            return OpenAIStructuredClient(
+                api_key=api_key, default_model=default_model,
+            )
+
+    async def _run_all() -> None:
+        result = await run_window(
+            registry=registry,
+            track_ids=track_ids,
+            symbols=symbols,
+            window_label=window_label,
+            rng_seed=seed,
+            persist=persist,
+            session_factory=factory,
+            llm_factory=llm_factory,
+        )
+        _print_window_result(result)
+
+    asyncio.run(_run_all())
+
+
+def _print_window_result(result: Any) -> None:
+    console.print()
+    console.print(
+        f"[bold cyan]Window run[/bold cyan] run_id={result.run_id} "
+        f"window={result.window_label} status=[bold]{result.status}[/bold] "
+        f"day={result.trading_day} "
+        f"duration={(result.completed_at - result.started_at).total_seconds():.2f}s"
+    )
+    table = Table(title=f"Per-(track,symbol) outcomes ({len(result.outcomes)})")
+    table.add_column("track_id", style="bold cyan")
+    table.add_column("symbol")
+    table.add_column("status", justify="center")
+    table.add_column("decision_items", justify="right")
+    table.add_column("notes", overflow="fold")
+    for o in result.outcomes:
+        if o.result is not None and o.result.judge_decision is not None:
+            items = str(len(o.result.judge_decision.plan.items))
+            note = o.result.judge_decision.plan.rationale[:90]
+        elif o.result is not None:
+            items = "-"
+            note = (o.result.judge_run.quarantine_reason or "")[:90]
+        else:
+            items = "-"
+            note = (o.reason or o.error or "")[:90]
+        status_text = {
+            "ok": "[green]ok[/]",
+            "partial": "[yellow]partial[/]",
+            "skipped_paused": "[blue]skipped[/]",
+            "aborted_kill": "[bold red]kill[/]",
+            "failed": "[red]failed[/]",
+        }.get(o.status, o.status)
+        table.add_row(o.track_id, o.symbol, status_text, items, note)
+    console.print(table)
+
 

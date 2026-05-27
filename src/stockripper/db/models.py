@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -283,3 +284,125 @@ class TrackSnapshot(Base):
     raw_snapshot_uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     track: Mapped[StrategyTrack] = relationship(back_populates="snapshots")
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — agent run audit + window/track lifecycle + control-plane state
+# ---------------------------------------------------------------------------
+class TrackRun(Base):
+    """One track's execution within a window-level Run (Phase 4)."""
+
+    __tablename__ = "track_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "track_id", "packet_id",
+            name="uq_track_runs_run_track_packet",
+        ),
+    )
+
+    track_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("runs.run_id"), nullable=False,
+    )
+    track_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("strategy_tracks.track_id"), nullable=False,
+    )
+    packet_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    """One of: ok, skipped_paused, aborted_kill, failed, partial."""
+    interrupt_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    started_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    completed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+
+    agent_runs: Mapped[list[AgentRun]] = relationship(
+        back_populates="track_run", cascade="all, delete-orphan",
+    )
+
+
+class AgentRun(Base):
+    """Audit record for one agent invocation within a TrackRun (Phase 4)."""
+
+    __tablename__ = "agent_runs"
+
+    agent_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    track_run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("track_runs.track_run_id"), nullable=False,
+    )
+    run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("runs.run_id"), nullable=False,
+    )
+    track_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("strategy_tracks.track_id"), nullable=False,
+    )
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    output_schema_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    fingerprint_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    raw_response_text: Mapped[str | None] = mapped_column(
+        String(65535), nullable=True,
+    )
+    quarantine_reason: Mapped[str | None] = mapped_column(
+        String(2048), nullable=True,
+    )
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+    )
+
+    track_run: Mapped[TrackRun] = relationship(back_populates="agent_runs")
+
+
+class KillSwitchState(Base):
+    """Global kill-switch state. Singleton row enforced by ``id == 1``."""
+
+    __tablename__ = "kill_switch_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_kill_switch_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    engaged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    engaged_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    engaged_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+    )
+
+
+class TrackPauseState(Base):
+    """Per-track pause state. One row per track that has ever been paused."""
+
+    __tablename__ = "track_pause_state"
+
+    track_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("strategy_tracks.track_id"),
+        primary_key=True,
+    )
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    paused_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    paused_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+    )

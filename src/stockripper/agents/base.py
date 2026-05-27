@@ -15,13 +15,13 @@ import datetime as dt
 import hashlib
 import json
 import logging
-import uuid
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from typing import cast
 
 from pydantic import BaseModel, ValidationError
 
+from stockripper.agents.ids import agent_run_id as _derive_agent_run_id
 from stockripper.agents.llm import (
     LLMClient,
     StructuredResponse,
@@ -101,9 +101,15 @@ class BaseAgent[TOutput: BaseModel](ABC):
         now: dt.datetime | None = None,
     ) -> AgentRunResult:
         created_at = now if now is not None else _now()
-        run_id = f"run_{self.agent_id}_{uuid.uuid4().hex[:16]}"
         template = self.template
         _input_text, input_hash = serialize_input(payload)
+        # Deterministic AgentRunResult.run_id derived from stable inputs
+        # so replay can address agent runs idempotently.
+        run_id = _derive_agent_run_id(
+            track_run_id=payload.run_id,
+            agent_id=self.agent_id,
+            input_hash=input_hash,
+        )
         model_id_for_quarantine = self.model_id_override or "unknown"
 
         try:
@@ -171,7 +177,7 @@ class BaseAgent[TOutput: BaseModel](ABC):
                 raw_response_text=json.dumps(parsed_local.model_dump(mode="json"), default=str),
                 quarantine_reason=None,
                 latency_ms=0,
-                created_at=_now(),
+                created_at=created_at,
             )
 
         # ---- LLM path ----------------------------------------------------
@@ -237,7 +243,7 @@ class BaseAgent[TOutput: BaseModel](ABC):
             raw_response_text=response.raw_text,
             quarantine_reason=None,
             latency_ms=response.latency_ms,
-            created_at=_now(),
+            created_at=created_at,
         )
 
     # ------------------------------------------------------------------
