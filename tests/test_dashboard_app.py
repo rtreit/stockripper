@@ -173,3 +173,35 @@ def test_websocket_endpoint_accepts_connections(
         # publishing yet so receive would block. We just exercise the
         # handshake here.
         ws.close()
+
+
+def test_post_events_accepts_and_validates(client: TestClient) -> None:
+    payload = {
+        "event": "window_started",
+        "run_id": "r_demo",
+        "track_id": "aggressive",
+        "agent_id": None,
+        "symbol": "AAPL",
+        "payload": {"window_label": "opening"},
+    }
+    resp = client.post("/api/events", json=payload)
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["accepted"] is True
+    assert body["event"] == "window_started"
+
+
+def test_post_events_rejects_unknown_event(client: TestClient) -> None:
+    resp = client.post(
+        "/api/events", json={"event": "not_a_real_event", "payload": {}}
+    )
+    assert resp.status_code == 422
+
+
+def test_post_events_rejects_malformed_json(client: TestClient) -> None:
+    resp = client.post(
+        "/api/events",
+        content=b"{not json",
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 400

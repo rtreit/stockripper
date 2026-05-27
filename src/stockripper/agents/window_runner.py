@@ -119,7 +119,8 @@ async def run_window(
     *,
     registry: AgentRegistry,
     track_ids: tuple[str, ...],
-    symbols: tuple[str, ...],
+    symbols: tuple[str, ...] = (),
+    symbols_by_track: dict[str, tuple[str, ...]] | None = None,
     window_label: str = "adhoc",
     trading_day: dt.date | None = None,
     config_hash: str = "dev",
@@ -138,8 +139,19 @@ async def run_window(
     ----------
     registry:
         Pre-built :class:`AgentRegistry` from :func:`build_registry`.
-    track_ids, symbols:
-        Cartesian product becomes the (track, symbol) work list.
+    track_ids:
+        Tracks to run.
+    symbols:
+        Fallback symbol list used for every track when
+        ``symbols_by_track`` does not provide an entry. Empty by default —
+        spec-compliant callers pass ``symbols_by_track`` (populated from
+        the per-track universe builder) instead of letting the operator
+        hand-pick tickers.
+    symbols_by_track:
+        Per-track candidate list, typically produced by the universe
+        builder honoring each track's liquidity/cap/instrument policy.
+        If a track is absent from this map, ``symbols`` is used as a
+        fallback (override path for debugging/replay).
     window_label, trading_day, config_hash:
         Inputs to the deterministic ``run_id`` derivation. Re-running
         with identical values reuses the same ``run_id`` (upsert).
@@ -189,6 +201,10 @@ async def run_window(
             "trading_day": day.isoformat(),
             "track_ids": list(track_ids),
             "symbols": list(symbols),
+            "symbols_by_track": (
+                {k: list(v) for k, v in symbols_by_track.items()}
+                if symbols_by_track is not None else None
+            ),
         },
     )
 
@@ -219,7 +235,12 @@ async def run_window(
         if track_id not in registry.bindings:
             LOG.warning("run_window: skipping unknown track_id=%s", track_id)
             continue
-        for symbol in symbols:
+        track_symbols: tuple[str, ...]
+        if symbols_by_track is not None and track_id in symbols_by_track:
+            track_symbols = symbols_by_track[track_id]
+        else:
+            track_symbols = symbols
+        for symbol in track_symbols:
             pid = derive_packet_id(
                 track_id=track_id, window_run_id=run_id, symbol=symbol,
             )

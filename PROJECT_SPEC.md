@@ -1385,6 +1385,25 @@ Acceptance: Risk-gate per-track tests pass; paper orders submit automatically th
 
 Acceptance: Every recommendation gets an interim score; leaderboard updates; judge regret reports per track.
 
+### Phase 6.5 — Trading day runner + dashboard cross-process bridge
+
+- Single command (`stockripper run-day`) that walks the configured decision
+  windows in `America/New_York`, runs preflight reconcile, per-window council
+  + judge + risk gate + execution, and post-window reconcile.
+- `--once` mode runs every window back-to-back for same-day smoke testing.
+- HTTP event bridge: `POST /api/events` on the dashboard + `HttpEventEmitter`
+  on the orchestrator so the trading day can run in a separate process and
+  still light up the Live Council Feed in real time.
+- Per-track universe wiring: `run-window` and `run-day` no longer require
+  operator-supplied tickers. `--symbol` is an explicit debug/replay override;
+  the default behavior is to pull a per-track candidate list from
+  `UniverseBuilder` (or a deterministic canned mini-universe in `--fake` mode).
+
+Acceptance: `stockripper run-day --once --fake --mock --no-execute` exercises
+the entire reconcile → window → reconcile loop against a temp ledger and the
+dashboard's REST + WebSocket endpoints; live mode (`--no-fake --alpaca`) is
+the production trading-day entry point.
+
 ### Phase 7 — Backtest + aggression sweep
 
 - Event-driven backtest engine (equities, shorts, options, leveraged ETFs).
