@@ -19,7 +19,6 @@ Design contract:
 from __future__ import annotations
 
 import datetime as dt
-import uuid
 from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, TypeVar
@@ -52,26 +51,48 @@ def _now() -> dt.datetime:
 class CannedCouncilLLM:
     """No-network ``LLMClient`` that synthesizes valid neutral outputs.
 
-    The orchestrator calls :meth:`bind_packet` before each per-packet
-    council fanout so symbol / instrument context is available when the
-    synthesizer constructs ``AgentRecommendation`` outputs.
+    The packet is provided at construction so the client is **stateless
+    and safe to share** across concurrent agent calls within one
+    (track, packet) execution. Phase-4 multi-track concurrency requires
+    one ``CannedCouncilLLM`` instance per (track, packet) coroutine,
+    which the window runner enforces.
+
+    A frozen ``clock`` is optional and used only for deterministic
+    timestamping inside synthesized outputs; tests should pass an
+    explicit value so the synthesized created_at fields are reproducible.
     """
 
     def __init__(
         self,
+        packet: EvidencePacket | None = None,
         *,
         model_id: str = "canned-council-v1",
         fixed_latency_ms: int = 1,
+        clock: dt.datetime | None = None,
     ) -> None:
         self._model_id = model_id
         self._fixed_latency_ms = fixed_latency_ms
-        self._packet: EvidencePacket | None = None
+        self._packet: EvidencePacket | None = packet
+        self._clock: dt.datetime | None = clock
         self.calls: list[Mapping[str, Any]] = []
 
     def bind_packet(self, packet: EvidencePacket) -> None:
-        """Provide per-packet context for the next batch of synthesized calls."""
+        """Provide per-packet context for the next batch of synthesized calls.
+
+        Retained for backwards compatibility; prefer passing ``packet`` in
+        the constructor. Calling this on a shared instance from multiple
+        coroutines is a race — construct a fresh client per coroutine.
+        """
 
         self._packet = packet
+
+    def bind_clock(self, clock: dt.datetime) -> None:
+        """Freeze the wall-clock used for synthesized ``created_at`` fields."""
+
+        self._clock = clock
+
+    def _moment(self) -> dt.datetime:
+        return self._clock if self._clock is not None else _now()
 
     def run_structured(
         self,
@@ -137,8 +158,10 @@ class CannedCouncilLLM:
     # ------------------------------------------------------------------
     def _make_recommendation(self, agent_id: str) -> AgentRecommendation:
         packet = self._require_packet(agent_id)
+        when = self._moment()
+        rec_seed = self._stable_id_seed(agent_id, "rec", packet.symbol)
         return AgentRecommendation(
-            recommendation_id=f"rec_{uuid.uuid4().hex[:16]}",
+            recommendation_id=f"rec_{rec_seed}",
             agent_id=agent_id,
             agent_version="1.0.0",
             track_id=packet.track_id,
@@ -156,13 +179,14 @@ class CannedCouncilLLM:
             prompt_injection_findings=(),
             multi_leg=None,
             pair_legs=None,
-            created_at=_now(),
+            created_at=when,
         )
 
     def _make_market_climate(self, agent_id: str) -> MarketClimateReport:
-        when = _now()
+        when = self._moment()
+        seed = self._stable_id_seed(agent_id, "climate", when.date().isoformat())
         return MarketClimateReport(
-            report_id=f"climate_{uuid.uuid4().hex[:16]}",
+            report_id=f"climate_{seed}",
             agent_id=agent_id,
             agent_version="1.0.0",
             as_of=when.date(),
@@ -178,31 +202,37 @@ class CannedCouncilLLM:
 
     def _make_skeptic_report(self, agent_id: str) -> SkepticReport:
         packet = self._require_packet(agent_id)
+        when = self._moment()
+        seed = self._stable_id_seed(agent_id, "skeptic", packet.symbol)
         return SkepticReport(
-            report_id=f"skeptic_{uuid.uuid4().hex[:16]}",
+            report_id=f"skeptic_{seed}",
             agent_id=agent_id,
             agent_version="1.0.0",
             track_id=packet.track_id,
             critiques=(),
-            created_at=_now(),
+            created_at=when,
         )
 
     def _make_risk_report(self, agent_id: str) -> RiskManagerReport:
         packet = self._require_packet(agent_id)
+        when = self._moment()
+        seed = self._stable_id_seed(agent_id, "risk", packet.symbol)
         return RiskManagerReport(
-            report_id=f"risk_{uuid.uuid4().hex[:16]}",
+            report_id=f"risk_{seed}",
             agent_id=agent_id,
             agent_version="1.0.0",
             track_id=packet.track_id,
             assessments=(),
             portfolio_level_flags=(),
-            created_at=_now(),
+            created_at=when,
         )
 
     def _make_judge_decision(self, agent_id: str) -> JudgeDecision:
         packet = self._require_packet(agent_id)
+        when = self._moment()
+        seed = self._stable_id_seed(agent_id, "plan", packet.symbol)
         plan = ActionPlan(
-            decision_id=f"plan_{uuid.uuid4().hex[:16]}",
+            decision_id=f"plan_{seed}",
             track_id=packet.track_id,
             judge_agent_id=agent_id,
             judge_agent_version="1.0.0",
@@ -213,25 +243,45 @@ class CannedCouncilLLM:
                 "holding cash for this window."
             ),
             objective_label="offline_canned_judge",
-            created_at=_now(),
+            created_at=when,
         )
         return JudgeDecision(plan=plan, provenance=None)
 
     def _make_pi_report(self, agent_id: str) -> PromptInjectionReport:
+        when = self._moment()
+        seed = self._stable_id_seed(agent_id, "pi")
         return PromptInjectionReport(
-            report_id=f"pi_{uuid.uuid4().hex[:16]}",
+            report_id=f"pi_{seed}",
             agent_id=agent_id,
             agent_version="1.0.0",
             findings=(),
             scanned_evidence_ids=(),
-            created_at=_now(),
+            created_at=when,
         )
 
     # ------------------------------------------------------------------
+    def _stable_id_seed(self, *parts: str) -> str:
+        """Deterministic 16-hex seed derived from caller-provided parts.
+
+        We mix in the model id + packet id so two coroutines that share a
+        Canned client by accident at least produce distinguishable ids,
+        but the same (model, packet, parts) always produces the same id.
+        """
+
+        import hashlib
+
+        body_parts: list[str] = [self._model_id]
+        if self._packet is not None:
+            body_parts.append(self._packet.packet_id)
+        body_parts.extend(parts)
+        body = "\x00".join(body_parts)
+        return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
     def _require_packet(self, agent_id: str) -> EvidencePacket:
         if self._packet is None:
             raise RuntimeError(
-                f"CannedCouncilLLM: bind_packet() not called before {agent_id!r}."
+                f"CannedCouncilLLM: packet not provided (construct with "
+                f"packet=… or call bind_packet) before {agent_id!r}."
             )
         return self._packet
 

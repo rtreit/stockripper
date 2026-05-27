@@ -16,12 +16,24 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from stockripper.db.models import (
+    AgentRun,
+    DecisionAction,
     Fill,
+    JudgeDecision,
+    KillSwitchState,
     Order,
+    Recommendation,
     RiskPolicy,
+    Run,
     StrategyTrack,
+    TrackPauseState,
+    TrackRun,
     TrackSnapshot,
 )
+
+
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
 
 
 class Repository:
@@ -232,6 +244,301 @@ class Repository:
             .limit(1)
         )
         return self.session.execute(stmt).scalar_one_or_none()
+
+    # ------------------------------------------------------------------
+    # Phase 4 — window run + track/agent audit
+    # ------------------------------------------------------------------
+    def create_run(
+        self,
+        *,
+        run_id: str,
+        window_label: str,
+        trading_day: dt.date,
+        config_hash: str,
+        started_at: dt.datetime,
+        status: str = "running",
+        notes: str | None = None,
+    ) -> Run:
+        existing = self.session.get(Run, run_id)
+        if existing is not None:
+            return existing
+        run = Run(
+            run_id=run_id,
+            window_label=window_label,
+            trading_day=trading_day,
+            config_hash=config_hash,
+            started_at=started_at,
+            status=status,
+            notes=notes,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run
+
+    def complete_run(
+        self,
+        *,
+        run_id: str,
+        status: str,
+        completed_at: dt.datetime | None = None,
+    ) -> Run:
+        run = self.session.get(Run, run_id)
+        if run is None:
+            raise KeyError(f"unknown run_id: {run_id!r}")
+        run.status = status
+        run.completed_at = completed_at if completed_at is not None else _utcnow()
+        self.session.flush()
+        return run
+
+    def get_run(self, run_id: str) -> Run | None:
+        return self.session.get(Run, run_id)
+
+    def upsert_track_run(
+        self,
+        *,
+        track_run_id: str,
+        run_id: str,
+        track_id: str,
+        packet_id: str,
+        symbol: str,
+        status: str,
+        started_at: dt.datetime,
+        completed_at: dt.datetime | None = None,
+        interrupt_reason: str | None = None,
+    ) -> TrackRun:
+        existing = self.session.get(TrackRun, track_run_id)
+        if existing is not None:
+            existing.status = status
+            existing.completed_at = completed_at
+            existing.interrupt_reason = interrupt_reason
+            return existing
+        track_run = TrackRun(
+            track_run_id=track_run_id,
+            run_id=run_id,
+            track_id=track_id,
+            packet_id=packet_id,
+            symbol=symbol,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            interrupt_reason=interrupt_reason,
+        )
+        self.session.add(track_run)
+        self.session.flush()
+        return track_run
+
+    def list_track_runs(self, *, run_id: str) -> list[TrackRun]:
+        stmt = (
+            select(TrackRun)
+            .where(TrackRun.run_id == run_id)
+            .order_by(TrackRun.track_id, TrackRun.packet_id)
+        )
+        return list(self.session.execute(stmt).scalars())
+
+    def upsert_agent_run(
+        self,
+        *,
+        agent_run_id: str,
+        track_run_id: str,
+        run_id: str,
+        track_id: str,
+        agent_id: str,
+        agent_version: str,
+        output_schema_name: str,
+        status: str,
+        fingerprint_digest: str,
+        model_id: str,
+        seed: int | None,
+        prompt_content_hash: str,
+        schema_content_hash: str,
+        input_content_hash: str,
+        output_json: dict[str, Any] | None,
+        raw_response_text: str | None,
+        quarantine_reason: str | None,
+        latency_ms: int | None,
+        started_at: dt.datetime,
+        created_at: dt.datetime,
+    ) -> AgentRun:
+        existing = self.session.get(AgentRun, agent_run_id)
+        if existing is not None:
+            existing.status = status
+            existing.output_json = output_json
+            existing.raw_response_text = raw_response_text
+            existing.quarantine_reason = quarantine_reason
+            existing.latency_ms = latency_ms
+            existing.created_at = created_at
+            return existing
+        agent_run = AgentRun(
+            agent_run_id=agent_run_id,
+            track_run_id=track_run_id,
+            run_id=run_id,
+            track_id=track_id,
+            agent_id=agent_id,
+            agent_version=agent_version,
+            output_schema_name=output_schema_name,
+            status=status,
+            fingerprint_digest=fingerprint_digest,
+            model_id=model_id,
+            seed=seed,
+            prompt_content_hash=prompt_content_hash,
+            schema_content_hash=schema_content_hash,
+            input_content_hash=input_content_hash,
+            output_json=output_json,
+            raw_response_text=raw_response_text,
+            quarantine_reason=quarantine_reason,
+            latency_ms=latency_ms,
+            started_at=started_at,
+            created_at=created_at,
+        )
+        self.session.add(agent_run)
+        self.session.flush()
+        return agent_run
+
+    def upsert_recommendation(self, **values: Any) -> Recommendation:
+        rid = str(values["recommendation_id"])
+        existing = self.session.get(Recommendation, rid)
+        if existing is not None:
+            for k, v in values.items():
+                setattr(existing, k, v)
+            return existing
+        rec = Recommendation(**values)
+        self.session.add(rec)
+        self.session.flush()
+        return rec
+
+    def upsert_judge_decision(self, **values: Any) -> JudgeDecision:
+        did = str(values["decision_id"])
+        existing = self.session.get(JudgeDecision, did)
+        if existing is not None:
+            for k, v in values.items():
+                setattr(existing, k, v)
+            return existing
+        decision = JudgeDecision(**values)
+        self.session.add(decision)
+        self.session.flush()
+        return decision
+
+    def upsert_decision_action(self, **values: Any) -> DecisionAction:
+        aid = str(values["action_id"])
+        existing = self.session.get(DecisionAction, aid)
+        if existing is not None:
+            for k, v in values.items():
+                setattr(existing, k, v)
+            return existing
+        action = DecisionAction(**values)
+        self.session.add(action)
+        self.session.flush()
+        return action
+
+    # ------------------------------------------------------------------
+    # Phase 4 — control-plane state (kill switch + per-track pause)
+    # ------------------------------------------------------------------
+    def get_kill_switch(self) -> KillSwitchState:
+        existing = self.session.get(KillSwitchState, 1)
+        if existing is not None:
+            return existing
+        row = KillSwitchState(
+            id=1, engaged=False, reason=None, engaged_at=None, engaged_by=None,
+            updated_at=_utcnow(),
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def engage_kill_switch(
+        self, *, reason: str, engaged_by: str | None = None,
+        when: dt.datetime | None = None,
+    ) -> KillSwitchState:
+        state = self.get_kill_switch()
+        moment = when if when is not None else _utcnow()
+        state.engaged = True
+        state.reason = reason
+        state.engaged_at = moment
+        state.engaged_by = engaged_by
+        state.updated_at = moment
+        self.session.flush()
+        return state
+
+    def release_kill_switch(
+        self, *, when: dt.datetime | None = None,
+    ) -> KillSwitchState:
+        state = self.get_kill_switch()
+        moment = when if when is not None else _utcnow()
+        state.engaged = False
+        state.reason = None
+        state.engaged_at = None
+        state.engaged_by = None
+        state.updated_at = moment
+        self.session.flush()
+        return state
+
+    def get_track_pause(self, track_id: str) -> TrackPauseState | None:
+        return self.session.get(TrackPauseState, track_id)
+
+    def pause_track(
+        self, *, track_id: str, reason: str,
+        paused_by: str | None = None,
+        when: dt.datetime | None = None,
+    ) -> TrackPauseState:
+        moment = when if when is not None else _utcnow()
+        existing = self.session.get(TrackPauseState, track_id)
+        if existing is not None:
+            existing.paused = True
+            existing.reason = reason
+            existing.paused_at = moment
+            existing.paused_by = paused_by
+            existing.updated_at = moment
+            self.session.flush()
+            return existing
+        row = TrackPauseState(
+            track_id=track_id,
+            paused=True,
+            reason=reason,
+            paused_at=moment,
+            paused_by=paused_by,
+            updated_at=moment,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def resume_track(
+        self, *, track_id: str,
+        when: dt.datetime | None = None,
+    ) -> TrackPauseState:
+        moment = when if when is not None else _utcnow()
+        existing = self.session.get(TrackPauseState, track_id)
+        if existing is None:
+            row = TrackPauseState(
+                track_id=track_id,
+                paused=False,
+                reason=None,
+                paused_at=None,
+                paused_by=None,
+                updated_at=moment,
+            )
+            self.session.add(row)
+            self.session.flush()
+            return row
+        existing.paused = False
+        existing.reason = None
+        existing.paused_at = None
+        existing.paused_by = None
+        existing.updated_at = moment
+        self.session.flush()
+        return existing
+
+    def list_paused_track_ids(self) -> list[str]:
+        stmt = (
+            select(TrackPauseState.track_id)
+            .where(TrackPauseState.paused.is_(True))
+            .order_by(TrackPauseState.track_id)
+        )
+        return list(self.session.execute(stmt).scalars())
+
+    def list_track_pause_states(self) -> list[TrackPauseState]:
+        stmt = select(TrackPauseState).order_by(TrackPauseState.track_id)
+        return list(self.session.execute(stmt).scalars())
 
 
 # ----------------------------------------------------------------------

@@ -4,14 +4,10 @@ Revision ID: 20260526_phase1_ledger
 Revises:
 Create Date: 2026-05-26 00:00:00.000000
 
-This migration creates the entire Phase 1 ledger schema (PROJECT_SPEC.md §15)
-in a single step by delegating to ``Base.metadata.create_all``. We use this
-shortcut intentionally for the first revision: every model is brand-new, so
-there is no diff to capture, and ``create_all`` produces identical DDL on
-SQLite (tests) and PostgreSQL (production) without per-dialect drift.
-
-Subsequent migrations should use proper ``op.add_column``/``op.create_table``
-operations so they can be reviewed and replayed deterministically.
+This migration creates only the Phase-1 ledger tables (PROJECT_SPEC.md §15)
+by passing an explicit allow-list of tables to ``Base.metadata.create_all``.
+Later phases create their own tables via dedicated migrations so the schema
+history stays linear and replayable.
 """
 
 from __future__ import annotations
@@ -27,12 +23,28 @@ down_revision: str | None | Sequence[str] = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Tables created in this revision. Add-only — never edit this list once
+# the migration ships; new tables get their own migration.
+_PHASE1_TABLES: tuple[str, ...] = (
+    "risk_policies",
+    "strategy_tracks",
+    "runs",
+    "recommendations",
+    "judge_decisions",
+    "decision_actions",
+    "orders",
+    "fills",
+    "track_snapshots",
+)
+
 
 def upgrade() -> None:
     bind = op.get_bind()
-    Base.metadata.create_all(bind=bind)
+    tables = [Base.metadata.tables[name] for name in _PHASE1_TABLES]
+    Base.metadata.create_all(bind=bind, tables=tables)
 
 
 def downgrade() -> None:
     bind = op.get_bind()
-    Base.metadata.drop_all(bind=bind)
+    tables = [Base.metadata.tables[name] for name in _PHASE1_TABLES]
+    Base.metadata.drop_all(bind=bind, tables=tables)

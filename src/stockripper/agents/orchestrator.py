@@ -1,4 +1,4 @@
-"""Phase-4 minimal-slice orchestrator.
+"""Phase-4 orchestrator.
 
 Runs one (track, packet) collaborative cycle:
 
@@ -12,18 +12,15 @@ instead of crashing the cycle. ``llm`` may be ``None`` for purely
 deterministic baseline tracks; LLM tracks require an :class:`LLMClient`
 (real ``OpenAIStructuredClient`` or the offline :class:`CannedCouncilLLM`).
 
-This is intentionally NOT LangGraph — it is the smallest useful slice
-that exercises every Phase-3 surface end-to-end so we can observe agents
-collaborating. Real graph wiring, checkpoints, persistence of
-``agent_runs`` / ``judge_decisions``, and parallel sub-graphs per track
-all land in the full Phase 4 PR.
+Phase 4 makes IDs and timestamps deterministic for replay: the caller
+passes ``window_run_id`` and a frozen ``now`` so every agent input is
+reproducible.
 """
 
 from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,8 +29,8 @@ from stockripper.agents.adversarial import (
     empty_skeptic_report,
 )
 from stockripper.agents.base import BaseAgent
-from stockripper.agents.canned_llm import CannedCouncilLLM
 from stockripper.agents.council import empty_market_climate
+from stockripper.agents.ids import track_run_id as derive_track_run_id
 from stockripper.agents.llm import LLMClient
 from stockripper.agents.registry import AgentRegistry
 from stockripper.agents.schemas import (
@@ -59,13 +56,20 @@ class TrackRunResult:
 
     track_id: str
     window_id: str
-    run_id: str
+    window_run_id: str
+    track_run_id: str
     packet: EvidencePacket
     market_climate_run: AgentRunResult | None
     council_runs: tuple[AgentRunResult, ...]
     skeptic_run: AgentRunResult | None
     risk_run: AgentRunResult | None
     judge_run: AgentRunResult
+    started_at: dt.datetime
+
+    @property
+    def run_id(self) -> str:
+        """Backwards-compat alias for ``track_run_id``."""
+        return self.track_run_id
 
     @property
     def all_runs(self) -> tuple[AgentRunResult, ...]:
@@ -138,6 +142,7 @@ class TrackRunResult:
 
 def _build_input(
     *,
+    track_run_id: str,
     track_id: str,
     window_id: str,
     agent_id: str,
@@ -150,7 +155,7 @@ def _build_input(
     now: dt.datetime,
 ) -> AgentRunInput:
     return AgentRunInput(
-        run_id=f"run_{uuid.uuid4().hex[:16]}",
+        run_id=track_run_id,
         track_id=track_id,
         window_id=window_id,
         agent_id=agent_id,
@@ -170,8 +175,9 @@ async def _run_one(
     *,
     llm: LLMClient | None,
     seed: int | None,
+    now: dt.datetime,
 ) -> AgentRunResult:
-    return await asyncio.to_thread(agent.run, payload, llm=llm, seed=seed)
+    return await asyncio.to_thread(agent.run, payload, llm=llm, seed=seed, now=now)
 
 
 async def run_track(
@@ -182,19 +188,42 @@ async def run_track(
     llm: LLMClient | None = None,
     rng_seed: int | None = None,
     window_id: str | None = None,
+    window_run_id: str | None = None,
     now: dt.datetime | None = None,
 ) -> TrackRunResult:
-    """Run one (track, packet) collaborative cycle and return all envelopes."""
+    """Run one (track, packet) collaborative cycle and return all envelopes.
+
+    ``window_run_id`` and ``now`` should be supplied by the Strategy
+    Tracks Manager (``window_runner.run_window``) so every agent input
+    in the window shares a stable wall-clock and id. Defaults work for
+    one-shot usage from the CLI but produce non-deterministic ids.
+    """
 
     when = now if now is not None else _now()
     wid = window_id or packet.window_id
     if track_id not in registry.bindings:
         raise KeyError(f"unknown track_id: {track_id!r}")
     binding = registry.bindings[track_id]
-    run_id = f"trackrun_{uuid.uuid4().hex[:16]}"
+    wrid = window_run_id or f"win_adhoc_{int(when.timestamp() * 1000):x}"
+    track_run_id = derive_track_run_id(
+        window_run_id=wrid,
+        track_id=track_id,
+        packet_id=packet.packet_id,
+    )
 
-    if isinstance(llm, CannedCouncilLLM):
-        llm.bind_packet(packet)
+    # Packet-aware fake clients (e.g. ``CannedCouncilLLM``) expose
+    # ``bind_packet`` so they can synthesize symbol-correct outputs.
+    # Binding inside ``run_track`` is safe because this coroutine
+    # owns the client end-to-end. The window runner is responsible
+    # for handing every concurrent ``run_track`` invocation its own
+    # client instance to avoid cross-coroutine races.
+    if llm is not None:
+        bind_packet = getattr(llm, "bind_packet", None)
+        if callable(bind_packet):
+            bind_packet(packet)
+        bind_clock = getattr(llm, "bind_clock", None)
+        if callable(bind_clock):
+            bind_clock(when)
 
     # ------------------------------------------------------------------
     # Step 1: market climate (LLM tracks only).
@@ -203,6 +232,7 @@ async def run_track(
     climate_for_council: MarketClimateReport | None = None
     if binding.market_climate_enabled:
         mc_input = _build_input(
+            track_run_id=track_run_id,
             track_id=track_id,
             window_id=wid,
             agent_id=registry.market_climate.agent_id,
@@ -211,7 +241,7 @@ async def run_track(
             now=when,
         )
         climate_run = await _run_one(
-            registry.market_climate, mc_input, llm=llm, seed=rng_seed
+            registry.market_climate, mc_input, llm=llm, seed=rng_seed, now=when
         )
         if (
             climate_run.status == AgentRunStatus.OK
@@ -227,6 +257,7 @@ async def run_track(
     council_agents = registry.council_for(track_id)
     council_inputs = [
         _build_input(
+            track_run_id=track_run_id,
             track_id=track_id,
             window_id=wid,
             agent_id=agent.agent_id,
@@ -240,7 +271,7 @@ async def run_track(
     council_runs = tuple(
         await asyncio.gather(
             *(
-                _run_one(agent, payload, llm=llm, seed=rng_seed)
+                _run_one(agent, payload, llm=llm, seed=rng_seed, now=when)
                 for agent, payload in zip(
                     council_agents, council_inputs, strict=True
                 )
@@ -263,6 +294,7 @@ async def run_track(
     risk_for_judge: RiskManagerReport | None = None
     if binding.is_llm_track and binding.adversarial_agent_ids:
         skeptic_input = _build_input(
+            track_run_id=track_run_id,
             track_id=track_id,
             window_id=wid,
             agent_id=registry.skeptic.agent_id,
@@ -273,6 +305,7 @@ async def run_track(
             now=when,
         )
         risk_input = _build_input(
+            track_run_id=track_run_id,
             track_id=track_id,
             window_id=wid,
             agent_id=registry.risk_manager.agent_id,
@@ -283,8 +316,8 @@ async def run_track(
             now=when,
         )
         skeptic_result, risk_result = await asyncio.gather(
-            _run_one(registry.skeptic, skeptic_input, llm=llm, seed=rng_seed),
-            _run_one(registry.risk_manager, risk_input, llm=llm, seed=rng_seed),
+            _run_one(registry.skeptic, skeptic_input, llm=llm, seed=rng_seed, now=when),
+            _run_one(registry.risk_manager, risk_input, llm=llm, seed=rng_seed, now=when),
         )
         skeptic_run = skeptic_result
         risk_run = risk_result
@@ -308,6 +341,7 @@ async def run_track(
     # ------------------------------------------------------------------
     judge_agent = registry.judge_for(track_id)
     judge_input = _build_input(
+        track_run_id=track_run_id,
         track_id=track_id,
         window_id=wid,
         agent_id=judge_agent.agent_id,
@@ -320,18 +354,22 @@ async def run_track(
         now=when,
     )
     judge_llm = llm if judge_agent.requires_llm else None
-    judge_run = await _run_one(judge_agent, judge_input, llm=judge_llm, seed=rng_seed)
+    judge_run = await _run_one(
+        judge_agent, judge_input, llm=judge_llm, seed=rng_seed, now=when
+    )
 
     return TrackRunResult(
         track_id=track_id,
         window_id=wid,
-        run_id=run_id,
+        window_run_id=wrid,
+        track_run_id=track_run_id,
         packet=packet,
         market_climate_run=climate_run,
         council_runs=council_runs,
         skeptic_run=skeptic_run,
         risk_run=risk_run,
         judge_run=judge_run,
+        started_at=when,
     )
 
 

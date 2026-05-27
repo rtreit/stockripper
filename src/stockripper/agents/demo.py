@@ -36,11 +36,19 @@ def build_demo_packet(
     instrument: RecommendationInstrument = RecommendationInstrument.EQUITY,
     bucket: str = "core",
     now: dt.datetime | None = None,
+    packet_id: str | None = None,
 ) -> EvidencePacket:
-    """Build a self-contained packet for offline orchestrator demos."""
+    """Build a self-contained packet for offline orchestrator demos.
+
+    ``packet_id`` defaults to a random ``pkt_demo_*`` value for ad-hoc
+    CLI usage; the window runner overrides it with a deterministic
+    derivation from ``(track_id, window_run_id, symbol)`` so replays
+    reproduce identical ids.
+    """
 
     when = now if now is not None else _now()
     wid = window_id or when.strftime("demo-%Y%m%dT%H%M%SZ")
+    pid = packet_id if packet_id is not None else f"pkt_demo_{uuid.uuid4().hex[:12]}"
     reasons: tuple[CandidateReason, ...] = (
         CandidateReason(
             code=CandidateReasonCode.PASSES_PRICE_FLOOR,
@@ -64,7 +72,7 @@ def build_demo_packet(
         summary_bits.append(f"news30={recent_news_count_30d}")
     summary = " ".join(summary_bits) or f"symbol={symbol}"
     return EvidencePacket(
-        packet_id=f"pkt_demo_{uuid.uuid4().hex[:12]}",
+        packet_id=pid,
         track_id=track_id,
         window_id=wid,
         symbol=symbol.upper(),
