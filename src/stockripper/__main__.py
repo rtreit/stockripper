@@ -1209,3 +1209,195 @@ def _print_window_result(result: Any) -> None:
         console.print(sub_table)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — scoring + dashboard
+# ---------------------------------------------------------------------------
+scoring_app = typer.Typer(
+    help="Score recommendations, compute leaderboards, and compute judge regret.",
+)
+dashboard_app = typer.Typer(help="Live dashboard for orchestrator activity.")
+app.add_typer(scoring_app, name="scoring")
+app.add_typer(dashboard_app, name="dashboard")
+
+
+def _scoring_session_factory(database_url: str | None) -> Any:
+    from sqlalchemy.orm import sessionmaker
+
+    engine = build_engine(database_url)
+    return sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+
+@scoring_app.command("score")
+def scoring_score(
+    run_id: str = typer.Option(..., "--run-id", help="Window run_id to score."),
+    as_of: str = typer.Option(
+        ..., "--as-of", help="As-of date for the AgentScore rows (ISO YYYY-MM-DD).",
+    ),
+    horizon_days: int = typer.Option(
+        5, "--horizon-days",
+        help="Default horizon used by the stub price provider for tests.",
+    ),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Score every recommendation in ``run_id`` using a stub price provider.
+
+    Live runs should plug in an Alpaca-backed PriceProvider in code;
+    this command intentionally uses the stub so it is safe to invoke
+    offline against any database.
+    """
+
+    from decimal import Decimal
+
+    from stockripper.db.engine import session_scope as _session_scope
+    from stockripper.scoring.reward import (
+        StaticPriceProvider,
+        score_recommendations_for_window,
+    )
+
+    as_of_date = dt.date.fromisoformat(as_of)
+    factory = _scoring_session_factory(database_url)
+    table: dict[tuple[str, dt.date, int], Decimal] = {}
+    with _session_scope(factory) as session:
+        repo = Repository(session)
+        recs = repo.list_recommendations(run_id=run_id)
+        for rec in recs:
+            key = (rec.symbol.upper(), rec.created_at.date(), int(rec.time_horizon_days))
+            table.setdefault(key, Decimal("0"))
+            bench_key = ("SPY", rec.created_at.date(), int(rec.time_horizon_days))
+            table.setdefault(bench_key, Decimal("0"))
+        _ = horizon_days
+        provider = StaticPriceProvider(table=table)
+        rows = score_recommendations_for_window(
+            session=session,
+            run_id=run_id,
+            as_of_date=as_of_date,
+            price_provider=provider,
+        )
+    if not rows:
+        console.print("[yellow]No recommendations scored.[/]")
+        return
+    table_out = Table(title=f"AgentScore rows for run {run_id}")
+    table_out.add_column("agent_id", style="bold cyan")
+    table_out.add_column("track_id")
+    table_out.add_column("reward", justify="right")
+    table_out.add_column("n", justify="right")
+    for agent_id, track_id, reward, n in rows:
+        table_out.add_row(agent_id, track_id, f"{reward:+.6f}", str(n))
+    console.print(table_out)
+
+
+@scoring_app.command("leaderboard")
+def scoring_leaderboard(
+    window_start: str = typer.Option(..., "--window-start"),
+    window_end: str = typer.Option(..., "--window-end"),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Compute and persist the head-to-head per-track leaderboard."""
+
+    from stockripper.db.engine import session_scope as _session_scope
+    from stockripper.scoring.leaderboard import (
+        compute_leaderboard,
+        persist_leaderboard,
+    )
+
+    ws = dt.date.fromisoformat(window_start)
+    we = dt.date.fromisoformat(window_end)
+    factory = _scoring_session_factory(database_url)
+    with _session_scope(factory) as session:
+        metrics = compute_leaderboard(
+            session=session, window_start=ws, window_end=we,
+        )
+        persist_leaderboard(
+            session=session, window_start=ws, window_end=we, metrics=metrics,
+        )
+    if not metrics:
+        console.print("[yellow]No snapshots in window; nothing to rank.[/]")
+        return
+    out = Table(title=f"Track leaderboard {ws} → {we}")
+    out.add_column("track_id", style="bold cyan")
+    out.add_column("cum_ret", justify="right")
+    out.add_column("sharpe", justify="right")
+    out.add_column("max_dd", justify="right")
+    out.add_column("win_rate", justify="right")
+    for m in metrics:
+        out.add_row(
+            m.track_id,
+            "-" if m.cumulative_return_pct is None else f"{m.cumulative_return_pct:+.6f}",
+            "-" if m.sharpe is None else f"{m.sharpe:+.4f}",
+            "-" if m.max_drawdown_pct is None else f"{m.max_drawdown_pct:.6f}",
+            "-" if m.win_rate is None else f"{m.win_rate:.4f}",
+        )
+    console.print(out)
+
+
+@scoring_app.command("regret")
+def scoring_regret(
+    run_id: str = typer.Option(..., "--run-id"),
+    track_id: str = typer.Option(..., "--track-id"),
+    as_of: str = typer.Option(..., "--as-of"),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Compute and persist judge regret for one (run, track, date)."""
+
+    from decimal import Decimal
+
+    from stockripper.db.engine import session_scope as _session_scope
+    from stockripper.scoring.judge_regret import (
+        compute_judge_regret_for_track,
+        persist_judge_regret_for_track,
+    )
+
+    as_of_date = dt.date.fromisoformat(as_of)
+    factory = _scoring_session_factory(database_url)
+    with _session_scope(factory) as session:
+        repo = Repository(session)
+        recs = repo.list_recommendations(run_id=run_id, track_id=track_id)
+        rewards: dict[str, Decimal] = {
+            r.recommendation_id: Decimal("0") for r in recs
+        }
+        report = compute_judge_regret_for_track(
+            session=session,
+            run_id=run_id,
+            track_id=track_id,
+            as_of_date=as_of_date,
+            rewards=rewards,
+        )
+        if report is None:
+            console.print("[yellow]No judge decision or recommendations for that key.[/]")
+            return
+        persist_judge_regret_for_track(session=session, report=report)
+    console.print(
+        f"[bold cyan]Regret[/bold cyan] judge={report.judge_agent_id} "
+        f"track={report.track_id} as_of={report.as_of_date} "
+        f"selected={report.selected_reward:+.6f} "
+        f"best_alt={report.best_alternative_reward:+.6f} "
+        f"regret={report.regret:+.6f} n={report.observation_count}"
+    )
+
+
+@dashboard_app.command("serve")
+def dashboard_serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8765, "--port"),
+    database_url: str | None = typer.Option(None, "--database-url"),
+) -> None:
+    """Serve the read-only dashboard backed by the ledger DB."""
+
+    import uvicorn
+
+    from stockripper.dashboard.app import build_app
+
+    factory = _scoring_session_factory(database_url)
+    app_instance = build_app(session_factory=factory)
+    console.print(
+        f"[bold green]StockRipper dashboard[/bold green] http://{host}:{port}"
+    )
+    uvicorn.run(app_instance, host=host, port=port, log_level="info")
+
+
+# Repository import is deferred until after the new commands above so that
+# circular-import edge cases stay impossible.
+from stockripper.db.repository import Repository  # noqa: E402
+

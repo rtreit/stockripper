@@ -42,6 +42,12 @@ from stockripper.agents.persistence import (
 )
 from stockripper.agents.registry import AgentRegistry
 from stockripper.agents.schemas import EvidencePacket
+from stockripper.dashboard.events import (
+    DashboardEvent,
+    EventName,
+    NullEventEmitter,
+)
+from stockripper.dashboard.events import EventEmitter as DashboardEmitter
 from stockripper.db.engine import build_session_factory, session_scope
 from stockripper.db.repository import Repository
 from stockripper.execution.adapter import (
@@ -124,6 +130,7 @@ async def run_window(
     session_factory: sessionmaker[Session] | None = None,
     packet_builder: PacketBuilder | None = None,
     execution_adapter: ExecutionAdapter | None = None,
+    event_emitter: DashboardEmitter | None = None,
 ) -> WindowRunResult:
     """Run every enabled (track, symbol) pair in parallel.
 
@@ -166,8 +173,24 @@ async def run_window(
         started_at=when,
     )
 
+    emitter: DashboardEmitter = (
+        event_emitter if event_emitter is not None else NullEventEmitter()
+    )
+
     factory = llm_factory if llm_factory is not None else _default_canned_factory
     pb = packet_builder if packet_builder is not None else _default_packet_builder
+
+    await _safe_emit(
+        emitter,
+        event=EventName.WINDOW_STARTED,
+        run_id=run_id,
+        payload={
+            "window_label": window_label,
+            "trading_day": day.isoformat(),
+            "track_ids": list(track_ids),
+            "symbols": list(symbols),
+        },
+    )
 
     # Pre-flight: open session for control-plane reads + run row creation.
     paused_track_ids: frozenset[str] = frozenset()
@@ -273,6 +296,7 @@ async def run_window(
             window_label=window_label,
             when=when,
             rng_seed=rng_seed,
+            emitter=emitter,
         )
         for w in runnable
     ]
@@ -358,6 +382,35 @@ async def run_window(
             outcomes=all_outcomes,
             adapter=execution_adapter,
         )
+        for sub in submissions:
+            await _safe_emit(
+                emitter,
+                event=EventName.ACTION_SUBMITTED,
+                run_id=run_id,
+                track_id=sub.track_id,
+                symbol=sub.symbol,
+                payload={
+                    "action_id": sub.action_id,
+                    "status": sub.status.value,
+                    "local_order_id": sub.local_order_id,
+                    "client_order_id": sub.client_order_id,
+                    "reason": sub.reason,
+                },
+            )
+
+    await _safe_emit(
+        emitter,
+        event=EventName.WINDOW_COMPLETED,
+        run_id=run_id,
+        payload={
+            "status": final_status,
+            "ok": len([o for o in all_outcomes if o.status == "ok"]),
+            "partial": len([o for o in all_outcomes if o.status == "partial"]),
+            "failed": len([o for o in all_outcomes if o.status == "failed"]),
+            "skipped": len([o for o in all_outcomes if o.status == "skipped_paused"]),
+            "aborted": len([o for o in all_outcomes if o.status == "aborted_kill"]),
+        },
+    )
 
     return WindowRunResult(
         run_id=run_id,
@@ -419,7 +472,17 @@ async def _run_one_track(
     window_label: str,
     when: dt.datetime,
     rng_seed: int | None,
+    emitter: DashboardEmitter | None = None,
 ) -> TrackRunResult:
+    em = emitter if emitter is not None else NullEventEmitter()
+    await _safe_emit(
+        em,
+        event=EventName.TRACK_STARTED,
+        run_id=run_id,
+        track_id=item.track_id,
+        symbol=item.symbol,
+        payload={"packet_id": item.packet_id, "track_run_id": item.track_run_id},
+    )
     packet = packet_builder(
         symbol=item.symbol,
         track_id=item.track_id,
@@ -428,7 +491,7 @@ async def _run_one_track(
         now=when,
     )
     llm = llm_factory(packet)
-    return await run_track(
+    result = await run_track(
         registry=registry,
         track_id=item.track_id,
         packet=packet,
@@ -438,6 +501,96 @@ async def _run_one_track(
         window_run_id=run_id,
         now=when,
     )
+    for run in result.all_runs:
+        await _safe_emit(
+            em,
+            event=EventName.AGENT_COMPLETED,
+            run_id=run_id,
+            track_id=item.track_id,
+            agent_id=run.agent_id,
+            symbol=item.symbol,
+            payload={"status": run.status.value, "agent_run_id": run.run_id},
+        )
+    for council_run in result.council_runs:
+        out = council_run.output
+        if out is None:
+            continue
+        await _safe_emit(
+            em,
+            event=EventName.RECOMMENDATION_EMITTED,
+            run_id=run_id,
+            track_id=item.track_id,
+            agent_id=council_run.agent_id,
+            symbol=getattr(out, "symbol", item.symbol),
+            payload={
+                "action": getattr(out, "action", None),
+                "conviction": str(getattr(out, "conviction", "")),
+                "thesis": getattr(out, "thesis", None),
+            },
+        )
+    if result.judge_run is not None and result.judge_run.output is not None:
+        decision = result.judge_run.output
+        plan = getattr(decision, "plan", None)
+        await _safe_emit(
+            em,
+            event=EventName.JUDGE_DECIDED,
+            run_id=run_id,
+            track_id=item.track_id,
+            agent_id=result.judge_run.agent_id,
+            symbol=item.symbol,
+            payload={
+                "posture": (
+                    str(plan.portfolio_posture)
+                    if plan is not None and plan.portfolio_posture is not None
+                    else None
+                ),
+                "actions": (
+                    len(plan.items) if plan is not None else 0
+                ),
+                "objective": (
+                    plan.objective_label if plan is not None else None
+                ),
+            },
+        )
+    await _safe_emit(
+        em,
+        event=EventName.TRACK_COMPLETED,
+        run_id=run_id,
+        track_id=item.track_id,
+        symbol=item.symbol,
+        payload={"track_run_id": item.track_run_id},
+    )
+    return result
+
+
+async def _safe_emit(
+    emitter: DashboardEmitter,
+    *,
+    event: EventName,
+    run_id: str | None = None,
+    track_id: str | None = None,
+    agent_id: str | None = None,
+    symbol: str | None = None,
+    payload: dict[str, object] | None = None,
+) -> None:
+    """Publish a :class:`DashboardEvent` swallowing all errors.
+
+    Event publication must never break the orchestrator hot path.
+    """
+
+    try:
+        await emitter.publish(
+            DashboardEvent(
+                event=event,
+                run_id=run_id,
+                track_id=track_id,
+                agent_id=agent_id,
+                symbol=symbol,
+                payload=payload or {},
+            ),
+        )
+    except Exception:  # defensive — emission must never break run_window
+        LOG.debug("Dashboard event emission failed for %s", event, exc_info=True)
 
 
 def _aggregate_status(
