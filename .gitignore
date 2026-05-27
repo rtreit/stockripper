@@ -243,3 +243,6 @@ setEnv.ps1
 uami_details.json
 
 documents/
+
+# Phase-2 on-disk research caches
+.data-cache/
