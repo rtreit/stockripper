@@ -44,6 +44,11 @@ from stockripper.agents.registry import AgentRegistry
 from stockripper.agents.schemas import EvidencePacket
 from stockripper.db.engine import build_session_factory, session_scope
 from stockripper.db.repository import Repository
+from stockripper.execution.adapter import (
+    ExecutionAdapter,
+    SubmissionResult,
+    SubmissionStatus,
+)
 
 LOG: Final = logging.getLogger(__name__)
 
@@ -82,6 +87,7 @@ class WindowRunResult:
     status: str
     """One of: ok, partial, aborted_kill, failed."""
     outcomes: tuple[TrackOutcome, ...] = field(default_factory=tuple)
+    submissions: tuple[SubmissionResult, ...] = field(default_factory=tuple)
 
     @property
     def ok_outcomes(self) -> tuple[TrackOutcome, ...]:
@@ -117,6 +123,7 @@ async def run_window(
     persist: bool = True,
     session_factory: sessionmaker[Session] | None = None,
     packet_builder: PacketBuilder | None = None,
+    execution_adapter: ExecutionAdapter | None = None,
 ) -> WindowRunResult:
     """Run every enabled (track, symbol) pair in parallel.
 
@@ -341,6 +348,17 @@ async def run_window(
             else None,
         )
 
+    submissions: tuple[SubmissionResult, ...] = ()
+    if (
+        persist
+        and execution_adapter is not None
+        and final_status != "aborted_kill"
+    ):
+        submissions = _execute_actions(
+            outcomes=all_outcomes,
+            adapter=execution_adapter,
+        )
+
     return WindowRunResult(
         run_id=run_id,
         window_label=window_label,
@@ -349,6 +367,7 @@ async def run_window(
         completed_at=completed_at,
         status=final_status,
         outcomes=all_outcomes,
+        submissions=submissions,
     )
 
 
@@ -548,6 +567,47 @@ def _finalize_run(
                 run.notes = notes
     except Exception:
         LOG.exception("Failed to finalize run %s", run_id)
+
+
+def _execute_actions(
+    *,
+    outcomes: tuple[TrackOutcome, ...],
+    adapter: ExecutionAdapter,
+) -> tuple[SubmissionResult, ...]:
+    """Submit every OK/partial outcome's judge-decision items through the adapter.
+
+    The adapter handles its own kill-switch / pause re-check via the
+    universal-floor stack so a kill or pause that lands between
+    persistence and submission still blocks the order.
+    """
+
+    results: list[SubmissionResult] = []
+    for o in outcomes:
+        if o.status not in {"ok", "partial"}:
+            continue
+        if o.result is None or o.result.judge_decision is None:
+            continue
+        for item in o.result.judge_decision.plan.items:
+            try:
+                results.append(adapter.submit_action(item))
+            except Exception as exc:  # log + continue, never crash window
+                LOG.exception(
+                    "Execution adapter raised for action %s/%s",
+                    o.track_id, item.action_id,
+                )
+                results.append(
+                    SubmissionResult(
+                        action_id=item.action_id,
+                        track_id=o.track_id,
+                        symbol=item.symbol,
+                        status=SubmissionStatus.REJECTED_FLOOR,
+                        client_order_id=None,
+                        local_order_id=None,
+                        reason=f"adapter_exception:{exc!r}",
+                        risk_status_label="rejected_floor:adapter_exception",
+                    )
+                )
+    return tuple(results)
 
 
 __all__ = (

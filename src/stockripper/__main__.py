@@ -1031,6 +1031,22 @@ def agents_run_window(
         True, "--persist/--no-persist",
         help="When --persist, write run/track/agent rows to the DB (default).",
     ),
+    execute: bool = typer.Option(
+        False, "--execute/--no-execute",
+        help=(
+            "When --execute, submit approved actions through the execution "
+            "adapter (defaults to the mock broker; pass --alpaca for paper "
+            "submission). Requires --persist."
+        ),
+    ),
+    alpaca: bool = typer.Option(
+        False, "--alpaca/--mock",
+        help=(
+            "Broker selector for --execute. --alpaca submits paper orders "
+            "via alpaca-py; --mock (default) uses the in-process mock that "
+            "synthesizes immediate fills."
+        ),
+    ),
     seed: int | None = typer.Option(
         None, "--seed", help="rng_seed propagated to every agent run.",
     ),
@@ -1039,7 +1055,9 @@ def agents_run_window(
     """Run every (track, symbol) pair in parallel via the Strategy Tracks Manager.
 
     Honors the global kill-switch and per-track pause state. Without
-    ``--persist`` no DB writes happen — useful for offline demos.
+    ``--persist`` no DB writes happen — useful for offline demos. With
+    ``--execute`` the per-track risk gate runs and approved orders are
+    submitted through the chosen broker (mock by default).
     """
 
     from sqlalchemy.orm import sessionmaker
@@ -1055,10 +1073,45 @@ def agents_run_window(
     )
     symbols = tuple(s.upper() for s in symbol)
 
-    factory = None
+    factory: Any = None
     if persist:
         engine = build_engine(database_url)
         factory = sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+    if execute and not persist:
+        console.print(
+            "[bold red]--execute requires --persist (no audit row, no submit).[/]"
+        )
+        raise typer.Exit(code=2)
+
+    execution_adapter: Any = None
+    if execute:
+        from stockripper.execution.adapter import (
+            AlpacaPaperBrokerClient,
+            ExecutionAdapter,
+            MockBrokerClient,
+        )
+
+        broker: Any
+        settings: StockripperSettings | None
+        if alpaca:
+            settings = load_settings()
+            settings.assert_paper_only()
+            broker = AlpacaPaperBrokerClient(settings)
+            console.print(
+                f"[bold yellow]execute mode: alpaca paper broker "
+                f"(endpoint={settings.alpaca_base_url})[/]"
+            )
+        else:
+            settings = None
+            broker = MockBrokerClient()
+            console.print("[yellow]execute mode: mock broker (synthetic fills)[/]")
+        execution_adapter = ExecutionAdapter(
+            session_factory=factory,
+            broker=broker,
+            window_id=window_label,
+            settings=settings,
+        )
 
     if fake:
         console.print("[yellow]offline mode: using CannedCouncilLLM per coroutine[/yellow]")
@@ -1089,6 +1142,7 @@ def agents_run_window(
             persist=persist,
             session_factory=factory,
             llm_factory=llm_factory,
+            execution_adapter=execution_adapter,
         )
         _print_window_result(result)
 
@@ -1128,5 +1182,30 @@ def _print_window_result(result: Any) -> None:
         }.get(o.status, o.status)
         table.add_row(o.track_id, o.symbol, status_text, items, note)
     console.print(table)
+
+    submissions = getattr(result, "submissions", ()) or ()
+    if submissions:
+        sub_table = Table(title=f"Execution submissions ({len(submissions)})")
+        sub_table.add_column("track_id", style="bold cyan")
+        sub_table.add_column("symbol")
+        sub_table.add_column("status", justify="center")
+        sub_table.add_column("client_order_id", overflow="fold")
+        sub_table.add_column("reason", overflow="fold")
+        sub_status_style = {
+            "submitted": "[green]submitted[/]",
+            "duplicate": "[blue]duplicate[/]",
+            "rejected_floor": "[bold red]floor[/]",
+            "rejected_risk": "[red]risk[/]",
+            "error": "[bold red]error[/]",
+        }
+        for s in submissions:
+            sub_table.add_row(
+                s.track_id,
+                s.symbol,
+                sub_status_style.get(s.status.value, s.status.value),
+                s.client_order_id or "-",
+                (s.reason or "")[:90],
+            )
+        console.print(sub_table)
 
 

@@ -188,6 +188,92 @@ class Repository:
         return fill
 
     # ------------------------------------------------------------------
+    # Phase 5 — execution adapter primitives
+    # ------------------------------------------------------------------
+    def find_order_by_client_order_id(self, client_order_id: str) -> Order | None:
+        """Look up an order by its deterministic ``client_order_id``."""
+
+        return self.session.execute(
+            select(Order).where(Order.client_order_id == client_order_id)
+        ).scalar_one_or_none()
+
+    def upsert_order(
+        self,
+        *,
+        local_order_id: str,
+        track_id: str,
+        action_id: str | None,
+        client_order_id: str,
+        symbol: str,
+        side: str,
+        order_type: str,
+        time_in_force: str,
+        status: str,
+        requested_notional_usd: Decimal | None = None,
+        requested_qty: Decimal | None = None,
+        limit_price: Decimal | None = None,
+        stop_price: Decimal | None = None,
+        alpaca_order_id: str | None = None,
+        submitted_at: dt.datetime | None = None,
+        raw_request_uri: str | None = None,
+        raw_response_uri: str | None = None,
+    ) -> Order:
+        """Insert or update an ``orders`` row keyed by ``client_order_id``.
+
+        Use this from the execution adapter so the second submission of an
+        identical intent collapses onto the first row (idempotency).
+        """
+
+        existing = self.find_order_by_client_order_id(client_order_id)
+        defaults: dict[str, Any] = {
+            "action_id": action_id,
+            "track_id": track_id,
+            "alpaca_order_id": alpaca_order_id,
+            "client_order_id": client_order_id,
+            "symbol": symbol.upper(),
+            "side": side,
+            "order_type": order_type,
+            "time_in_force": time_in_force,
+            "requested_notional_usd": requested_notional_usd,
+            "requested_qty": requested_qty,
+            "limit_price": limit_price,
+            "stop_price": stop_price,
+            "status": status,
+            "submitted_at": submitted_at,
+            "raw_request_uri": raw_request_uri,
+            "raw_response_uri": raw_response_uri,
+        }
+        if existing is None:
+            order = Order(local_order_id=local_order_id, **defaults)
+            self.session.add(order)
+            self.session.flush()
+            return order
+        for key, value in defaults.items():
+            setattr(existing, key, value)
+        self.session.flush()
+        return existing
+
+    def list_orders_for_track(self, *, track_id: str) -> list[Order]:
+        stmt = (
+            select(Order)
+            .where(Order.track_id == track_id)
+            .order_by(Order.submitted_at.desc().nullslast())
+        )
+        return list(self.session.execute(stmt).scalars())
+
+    def set_action_risk_status(
+        self, *, action_id: str, risk_status: str,
+    ) -> DecisionAction | None:
+        """Set ``decision_actions.risk_status`` for a single action."""
+
+        existing = self.session.get(DecisionAction, action_id)
+        if existing is None:
+            return None
+        existing.risk_status = risk_status
+        self.session.flush()
+        return existing
+
+    # ------------------------------------------------------------------
     # Track snapshots (reconciliation output)
     # ------------------------------------------------------------------
     def record_track_snapshot(
