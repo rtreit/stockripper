@@ -45,3 +45,16 @@ def paper_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ALPACA_API_SECRET_KEY", "test-secret-0000000000")
     monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0000000000")
+
+
+from tests.fixtures_agents import (  # noqa: E402,F401 — re-export for collection
+    now,
+    sample_candidate,
+    sample_market_climate,
+    sample_packet,
+    sample_recommendation,
+    sample_risk_report,
+    sample_run_input,
+    sample_skeptic_report,
+    sample_snapshot,
+)

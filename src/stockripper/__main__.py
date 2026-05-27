@@ -39,10 +39,14 @@ db_app = typer.Typer(help="Database schema management (Alembic + dev shortcuts).
 tracks_app = typer.Typer(help="Strategy-track inspection and seeding.")
 universe_app = typer.Typer(help="Candidate universe construction and inspection.")
 research_app = typer.Typer(help="Per-symbol research probes (fundamentals, news).")
+agents_app = typer.Typer(help="Inspect the Phase-3 agent graph (council, judges, baselines).")
+prompts_app = typer.Typer(help="Inspect the content-addressed prompt registry.")
 app.add_typer(db_app, name="db")
 app.add_typer(tracks_app, name="tracks")
 app.add_typer(universe_app, name="universe")
 app.add_typer(research_app, name="research")
+app.add_typer(agents_app, name="agents")
+app.add_typer(prompts_app, name="prompts")
 console = Console()
 
 
@@ -507,5 +511,160 @@ def research_news(
     console.print(table)
 
 
+# ---------------------------------------------------------------------------
+# agents subcommands
+# ---------------------------------------------------------------------------
+@agents_app.command("list")
+def agents_list(
+    track_id: str | None = typer.Option(
+        None, "--track", help="Restrict listing to one track id (e.g. balanced, yolo, benchmark)."
+    ),
+) -> None:
+    """List council, adversarial, judge, and baseline agents (optionally per track)."""
+
+    from stockripper.agents.registry import build_registry
+
+    registry = build_registry()
+    if track_id is not None and track_id not in registry.bindings:
+        console.print(f"[red]unknown track: {track_id}[/red]")
+        raise typer.Exit(code=1)
+
+    bindings = (
+        [registry.bindings[track_id]] if track_id else list(registry.bindings.values())
+    )
+    table = Table(title="Agent bindings")
+    table.add_column("track")
+    table.add_column("kind")
+    table.add_column("count")
+    table.add_column("agents")
+    for b in bindings:
+        kind = "llm" if b.is_llm_track else "baseline"
+        if b.is_llm_track:
+            council_names = ", ".join(b.council_agent_ids)
+            table.add_row(
+                b.track_id, kind, str(len(b.council_agent_ids)), f"judge={b.judge_id}"
+            )
+            table.add_row("", "council", "", council_names)
+            if b.adversarial_agent_ids:
+                table.add_row(
+                    "", "adversarial", str(len(b.adversarial_agent_ids)),
+                    ", ".join(b.adversarial_agent_ids),
+                )
+            if b.market_climate_enabled:
+                table.add_row("", "climate", "1", registry.market_climate.agent_id)
+        else:
+            table.add_row(b.track_id, kind, "1", b.judge_id)
+    console.print(table)
+
+
+@agents_app.command("describe")
+def agents_describe(agent_id: str = typer.Argument(...)) -> None:
+    """Print metadata for one agent (council, adversarial, judge, baseline)."""
+
+    from stockripper.agents.council import COUNCIL
+    from stockripper.agents.judges import JUDGES
+    from stockripper.agents.registry import build_registry
+
+    registry = build_registry()
+
+    for spec in COUNCIL:
+        if spec.agent_id == agent_id:
+            console.print(f"[bold]Council agent[/bold]: {spec.agent_id}")
+            console.print(f"  label: {spec.label}")
+            console.print(f"  family: {spec.family}")
+            console.print(f"  default_horizon_days: {spec.default_horizon_days}")
+            console.print(
+                "  allowed_actions: " + ", ".join(a.value for a in spec.allowed_actions)
+            )
+            console.print(
+                "  allowed_instruments: "
+                + ", ".join(i.value for i in spec.allowed_instruments)
+            )
+            console.print(f"  philosophy: {spec.philosophy}")
+            return
+
+    for jspec in JUDGES:
+        if jspec.judge_id == agent_id:
+            console.print(f"[bold]Judge[/bold]: {jspec.judge_id}")
+            console.print(f"  track: {jspec.track_id}")
+            console.print(f"  objective: {jspec.objective_label}")
+            console.print(f"  prompt_template: {jspec.prompt_template_id}")
+            return
+
+    if agent_id in registry.baselines:
+        baseline = registry.baselines[agent_id]
+        console.print(f"[bold]Baseline[/bold]: {baseline.agent_id}")
+        console.print(f"  version: {baseline.agent_version}")
+        console.print(f"  requires_llm: {baseline.requires_llm}")
+        return
+
+    for special in (
+        registry.market_climate,
+        registry.skeptic,
+        registry.risk_manager,
+        registry.prompt_injection,
+    ):
+        if special.agent_id == agent_id:
+            console.print(f"[bold]Adversarial / utility[/bold]: {special.agent_id}")
+            console.print(f"  version: {special.agent_version}")
+            requires_llm = getattr(special, "requires_llm", None)
+            if requires_llm is not None:
+                console.print(f"  requires_llm: {requires_llm}")
+            return
+
+    console.print(f"[red]unknown agent_id: {agent_id}[/red]")
+    raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# prompts subcommands
+# ---------------------------------------------------------------------------
+@prompts_app.command("list")
+def prompts_list() -> None:
+    """List every registered prompt template with content hash and length."""
+
+    # Eagerly instantiate council + judges so lazy registrations land in PROMPTS.
+    from stockripper.agents.prompts import PROMPTS
+    from stockripper.agents.registry import build_registry
+
+    build_registry()
+    templates = sorted(PROMPTS.all_templates(), key=lambda t: t.template_id)
+    table = Table(title=f"Prompt templates ({len(templates)})")
+    table.add_column("template_id")
+    table.add_column("version")
+    table.add_column("content_hash", overflow="fold")
+    table.add_column("chars", justify="right")
+    for t in templates:
+        table.add_row(t.template_id, t.version, t.content_hash[:16] + "…", str(len(t.body)))
+    console.print(table)
+
+
+@prompts_app.command("show")
+def prompts_show(
+    template_id: str = typer.Argument(...),
+    with_preamble: bool = typer.Option(
+        False, "--with-preamble/--no-preamble",
+        help="Include the universal policy preamble in the rendered output.",
+    ),
+) -> None:
+    """Print one prompt template (body or fully-rendered text)."""
+
+    from stockripper.agents.prompts import PROMPTS
+    from stockripper.agents.registry import build_registry
+
+    build_registry()
+    if template_id not in PROMPTS:
+        console.print(f"[red]unknown template_id: {template_id}[/red]")
+        raise typer.Exit(code=1)
+    tmpl = PROMPTS.get(template_id)
+    console.print(f"[bold]template_id[/bold]: {tmpl.template_id}")
+    console.print(f"[bold]version[/bold]: {tmpl.version}")
+    console.print(f"[bold]content_hash[/bold]: {tmpl.content_hash}")
+    console.print(f"[bold]rendered_content_hash[/bold]: {tmpl.rendered_content_hash}")
+    console.print("---")
+    console.print(tmpl.render(include_preamble=with_preamble))
+
+
 if __name__ == "__main__":  # pragma: no cover - typer dispatch
     app()
+
