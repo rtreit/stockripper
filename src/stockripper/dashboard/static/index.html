@@ -113,59 +113,71 @@
     const sign = (v) => v === null || v === undefined ? "" : (Number(v) >= 0 ? "pos" : "neg");
 
     async function refreshRuns() {
-      const r = await fetch("/api/runs?limit=10");
-      if (!r.ok) return;
-      const rows = await r.json();
-      if (!rows.length) {
-        $("runs").innerHTML = '<div class="empty">No runs yet.</div>';
-        return;
+      try {
+        const r = await fetch("/api/runs?limit=10");
+        if (!r.ok) { $("runs").innerHTML = `<div class="empty">runs unavailable (HTTP ${r.status})</div>`; return; }
+        const rows = await r.json();
+        if (!rows.length) {
+          $("runs").innerHTML = '<div class="empty">No runs yet.</div>';
+          return;
+        }
+        $("runs").innerHTML = `<table><thead><tr>
+          <th>Run</th><th>Day</th><th>Window</th><th>Status</th><th>Started</th>
+        </tr></thead><tbody>${rows.map(r => `<tr>
+          <td>${r.run_id.slice(0,16)}…</td>
+          <td>${r.trading_day || "—"}</td>
+          <td>${r.window_label || "—"}</td>
+          <td>${r.status}</td>
+          <td>${r.started_at || "—"}</td>
+        </tr>`).join("")}</tbody></table>`;
+      } catch (e) {
+        $("runs").innerHTML = `<div class="empty">runs error: ${e}</div>`;
       }
-      $("runs").innerHTML = `<table><thead><tr>
-        <th>Run</th><th>Day</th><th>Window</th><th>Status</th><th>Started</th>
-      </tr></thead><tbody>${rows.map(r => `<tr>
-        <td>${r.run_id.slice(0,16)}…</td>
-        <td>${r.trading_day || "—"}</td>
-        <td>${r.window_label || "—"}</td>
-        <td>${r.status}</td>
-        <td>${r.started_at || "—"}</td>
-      </tr>`).join("")}</tbody></table>`;
     }
     async function refreshLeaderboard() {
-      const r = await fetch("/api/leaderboard");
-      if (!r.ok) return;
-      const rows = await r.json();
-      if (!rows.length) {
-        $("leaderboard").innerHTML = '<div class="empty">No leaderboard data.</div>';
-        return;
+      try {
+        const r = await fetch("/api/leaderboard");
+        if (!r.ok) { $("leaderboard").innerHTML = `<div class="empty">leaderboard unavailable (HTTP ${r.status})</div>`; return; }
+        const rows = await r.json();
+        if (!rows.length) {
+          $("leaderboard").innerHTML = '<div class="empty">No leaderboard data.</div>';
+          return;
+        }
+        $("leaderboard").innerHTML = `<table><thead><tr>
+          <th>Rank</th><th>Track</th><th>Cum Return</th><th>Sharpe</th><th>Max DD</th><th>Win Rate</th>
+        </tr></thead><tbody>${rows.map(r => `<tr>
+          <td>${r.rank || "—"}</td>
+          <td>${r.track_id}</td>
+          <td class="num"><span class="${sign(r.cumulative_return_pct)}">${fmtPct(r.cumulative_return_pct)}</span></td>
+          <td class="num">${fmtNum(r.sharpe)}</td>
+          <td class="num">${fmtPct(r.max_drawdown_pct)}</td>
+          <td class="num">${fmtPct(r.win_rate)}</td>
+        </tr>`).join("")}</tbody></table>`;
+      } catch (e) {
+        $("leaderboard").innerHTML = `<div class="empty">leaderboard error: ${e}</div>`;
       }
-      $("leaderboard").innerHTML = `<table><thead><tr>
-        <th>Rank</th><th>Track</th><th>Cum Return</th><th>Sharpe</th><th>Max DD</th><th>Win Rate</th>
-      </tr></thead><tbody>${rows.map(r => `<tr>
-        <td>${r.rank || "—"}</td>
-        <td>${r.track_id}</td>
-        <td class="num"><span class="${sign(r.cumulative_return_pct)}">${fmtPct(r.cumulative_return_pct)}</span></td>
-        <td class="num">${fmtNum(r.sharpe)}</td>
-        <td class="num">${fmtPct(r.max_drawdown_pct)}</td>
-        <td class="num">${fmtPct(r.win_rate)}</td>
-      </tr>`).join("")}</tbody></table>`;
     }
     async function refreshScores() {
-      const r = await fetch("/api/agent-scores");
-      if (!r.ok) return;
-      const rows = (await r.json()).slice(0, 20);
-      if (!rows.length) {
-        $("scores").innerHTML = '<div class="empty">No scored agents yet.</div>';
-        return;
+      try {
+        const r = await fetch("/api/agent-scores");
+        if (!r.ok) { $("scores").innerHTML = `<div class="empty">scores unavailable (HTTP ${r.status})</div>`; return; }
+        const rows = (await r.json()).slice(0, 20);
+        if (!rows.length) {
+          $("scores").innerHTML = '<div class="empty">No scored agents yet.</div>';
+          return;
+        }
+        $("scores").innerHTML = `<table><thead><tr>
+          <th>Agent</th><th>Track</th><th>Date</th><th>Reward</th><th>N</th>
+        </tr></thead><tbody>${rows.map(r => `<tr>
+          <td>${r.agent_id}</td>
+          <td>${r.track_id}</td>
+          <td>${r.as_of_date}</td>
+          <td class="num"><span class="${sign(r.reward_score)}">${fmtPct(r.reward_score)}</span></td>
+          <td class="num">${r.observation_count}</td>
+        </tr>`).join("")}</tbody></table>`;
+      } catch (e) {
+        $("scores").innerHTML = `<div class="empty">scores error: ${e}</div>`;
       }
-      $("scores").innerHTML = `<table><thead><tr>
-        <th>Agent</th><th>Track</th><th>Date</th><th>Reward</th><th>N</th>
-      </tr></thead><tbody>${rows.map(r => `<tr>
-        <td>${r.agent_id}</td>
-        <td>${r.track_id}</td>
-        <td>${r.as_of_date}</td>
-        <td class="num"><span class="${sign(r.reward_score)}">${fmtPct(r.reward_score)}</span></td>
-        <td class="num">${r.observation_count}</td>
-      </tr>`).join("")}</tbody></table>`;
     }
     function setStatus(connected) {
       $("status").classList.toggle("connected", connected);

@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>StockRipper — An Autonomous Multi-Agent Paper-Trading Research Lab</title>
+<style>
+  :root {
+    --ink: #111;
+    --paper: #fafafa;
+    --rule: #999;
+    --accent: #1f3a93;
+    --code-bg: #eef0f3;
+    --muted: #555;
+    --warn: #8a3b00;
+  }
+  html { background: #ddd; }
+  body {
+    margin: 0;
+    background: var(--ddd);
+    font-family: "Times New Roman", "Georgia", serif;
+    color: var(--ink);
+    line-height: 1.45;
+  }
+  .page {
+    max-width: 880px;
+    margin: 24px auto;
+    background: var(--paper);
+    padding: 56px 72px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+  }
+  h1.title {
+    font-size: 28px;
+    line-height: 1.1;
+    text-align: center;
+    margin: 0 0 4px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .subtitle {
+    text-align: center;
+    font-style: italic;
+    font-size: 16px;
+    color: var(--muted);
+    margin: 0 0 20px;
+  }
+  .byline {
+    text-align: center;
+    font-size: 14px;
+    color: var(--muted);
+    margin-bottom: 28px;
+    border-bottom: 2px double var(--rule);
+    padding-bottom: 14px;
+  }
+  h2 {
+    font-size: 20px;
+    margin: 32px 0 8px;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 3px;
+    color: var(--accent);
+  }
+  h3 {
+    font-size: 16px;
+    margin: 22px 0 6px;
+    color: var(--ink);
+  }
+  h4 {
+    font-size: 14px;
+    margin: 16px 0 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  p, li { font-size: 14.5px; }
+  .abstract {
+    border-left: 4px solid var(--accent);
+    padding: 8px 16px;
+    margin: 0 0 26px;
+    background: #f1f4fb;
+    font-style: italic;
+    font-size: 14px;
+  }
+  .abstract strong { font-style: normal; }
+  figure {
+    margin: 18px 0;
+    padding: 12px;
+    border: 1px solid var(--rule);
+    background: #fff;
+    text-align: center;
+  }
+  figcaption {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  pre.diagram {
+    font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
+    font-size: 11.5px;
+    text-align: left;
+    line-height: 1.25;
+    background: #fff;
+    padding: 14px;
+    margin: 0;
+    overflow-x: auto;
+    color: #222;
+  }
+  pre.code, code {
+    font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
+    background: var(--code-bg);
+  }
+  pre.code {
+    font-size: 12.5px;
+    padding: 10px 14px;
+    overflow-x: auto;
+    border-left: 3px solid #888;
+    margin: 8px 0 16px;
+  }
+  code { padding: 1px 4px; border-radius: 2px; font-size: 12.5px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 18px;
+    font-size: 13px;
+  }
+  th, td {
+    border: 1px solid var(--rule);
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #e6e9f0; }
+  .note {
+    border-left: 4px solid var(--warn);
+    background: #fff7ec;
+    padding: 8px 14px;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  .toc ol { padding-left: 22px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .refs li { margin: 4px 0; }
+  .small { font-size: 12px; color: var(--muted); }
+  hr.section { border: 0; border-top: 1px solid var(--rule); margin: 28px 0; }
+  .caption-label { font-weight: 700; }
+  svg.architecture { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1 class="title">StockRipper</h1>
+<p class="subtitle">An Autonomous Multi-Agent Paper-Trading Research Lab</p>
+<p class="byline">A Technical Note on Architecture, Operational Flow, and Engineering Trade-offs<br />
+<span class="small">Revision 1 &middot; May 2026</span></p>
+
+<div class="abstract">
+<strong>Abstract:</strong> StockRipper is a deterministic, audit-first
+multi-agent system that proposes and executes paper-trading decisions
+against Alpaca's paper endpoint. The system fans out a fixed candidate
+universe through eight competing <em>strategy tracks</em> in parallel.
+Each track runs an identical 31-agent council under a different objective
+function, risk policy, and judge model, allowing the operator to study how
+the same market state is interpreted across a continuum from conservative
+to highly aggressive postures. Universal floors, deterministic order ID
+generation, and a content-addressed prompt registry preserve replayability
+and prevent the cross-track contamination that an ad-hoc multi-agent setup
+would invite. This note describes the system's architecture, the seven
+implementation phases (foundations through orchestrated trading day), and
+the engineering trade-offs that fall out of treating Large Language Model
+agents as untrusted, schema-constrained components inside a conventional
+hard-real-time-style ledger.</div>
+
+<div class="toc">
+<h4>Contents</h4>
+<ol>
+  <li><a href="#intro">Introduction</a></li>
+  <li><a href="#architecture">System architecture</a></li>
+  <li><a href="#data">The data plane</a></li>
+  <li><a href="#agents">The agent council</a></li>
+  <li><a href="#tracks">Strategy tracks and judges</a></li>
+  <li><a href="#risk">Risk gates and execution</a></li>
+  <li><a href="#scoring">Scoring, leaderboard, and regret</a></li>
+  <li><a href="#dashboard">The live dashboard</a></li>
+  <li><a href="#opflow">Operational flow: a trading day</a></li>
+  <li><a href="#tradeoffs">Engineering trade-offs</a></li>
+  <li><a href="#future">Future work</a></li>
+  <li><a href="#refs">References and source map</a></li>
+</ol>
+</div>
+
+<hr class="section" />
+
+<h2 id="intro">1. Introduction</h2>
+
+<p>The premise of StockRipper is simple. Modern Large Language Models
+(LLMs) are competent at reading prose, summarising 10-Ks, weighing
+qualitative arguments, and producing structured recommendations. They are
+also famously unreliable: stochastic in output, prone to hallucination,
+sensitive to prompt phrasing, and entirely untrustworthy with money. A
+disciplined system can nevertheless extract value from them, provided
+their output is treated as <em>untrusted structured proposals</em>
+filtered through deterministic policy.</p>
+
+<p>This project is a working harness for that premise. Every recommendation
+is a Pydantic-validated record; every order has a deterministic
+<code>client_order_id</code> derived from track, run, and packet; every
+trade is paper-only, gated by a per-track risk policy and a fixed set of
+universal floors that no agent vote can bypass. The system runs eight
+strategy tracks concurrently — from <em>conservative</em>
+(mega-cap equity only, tight drawdown floor) to <em>yolo</em>
+(micro-caps, leveraged ETFs, single-leg options, no recent-catalyst
+requirement) — and ranks them on cumulative return, Sharpe,
+Sortino, Calmar, max drawdown, win rate, and turnover. Operators do not
+hand-pick tickers. The universe builder per track decides eligibility from
+liquidity, market-cap band, instrument allow-list, and the optional
+hidden-gem screen.</p>
+
+<p>The implementation is Python 3.12 under <code>uv</code>, SQLAlchemy
+2.x with Alembic migrations on SQLite (Postgres-compatible), FastAPI with
+a vanilla-JavaScript single-page dashboard, and OpenAI's structured-output
+API for live agent calls. A canned offline LLM is bundled for
+deterministic replay, regression tests, and dry runs. The trading day is
+driven by a single command: <code>stockripper run-day</code>.</p>
+
+<h2 id="architecture">2. System architecture</h2>
+
+<p>Figure 1 shows the system as eight roughly equal layers stacked on a
+shared ledger. The layers are deliberately decoupled. Each one consumes
+only the structured types of the layer below; no LLM output ever reaches
+the broker without crossing at least two schema validation boundaries and
+one risk gate.</p>
+
+<figure>
+<pre class="diagram">
+                  +----------------------------------------------+
+                  |              Dashboard (FastAPI)             |
+                  |   REST + WebSocket /ws/events  +  vanilla JS |
+                  +----------------------------------------------+
+                                          ^
+                                          |  HTTP push (EventBus)
+                                          |
++-------------+   +-----------+   +-----------------+   +----------------+
+|  Universe   |-->| Council   |-->|     Judge       |-->|  Risk Gate     |
+|  Builder    |   | (31 LLM   |   |  (per-track     |   |  (floors +     |
+|  (per       |   |  agents,  |   |   objective)    |   |   per-track    |
+|  track)     |   |  parallel)|   |                 |   |   policy)      |
++-------------+   +-----------+   +-----------------+   +-------+--------+
+       ^               ^                  ^                      |
+       |               |                  |                      v
+       |          +----+------------------+--+         +----------------+
+       |          |     Prompt Registry      |         | Execution      |
+       |          |  (content-addressed)     |         | Adapter        |
+       |          +--------------------------+         | (Alpaca / Mock)|
+       |                                               +-------+--------+
+       |                                                       |
+       |        +----------------------------+                 |
+       +--------+      Data Adapters         |                 |
+                |  market | news | EDGAR     |                 |
+                |  fundamentals | options    |                 |
+                +-------------+--------------+                 |
+                              |                                |
+                              v                                v
+                  +---------------------------------------------+
+                  |          Ledger (SQLite / Postgres)         |
+                  |   runs | recommendations | orders | fills   |
+                  |   track_snapshots | agent_runs | scores     |
+                  +---------------------------------------------+
+                              ^
+                              |
+                  +-----------+----------------+
+                  |   Reconciler (Alpaca MCP)  |
+                  +----------------------------+
+</pre>
+<figcaption><span class="caption-label">Figure 1.</span> StockRipper
+component layering. Solid arrows are control flow on a single decision
+window; dashed paths (omitted for clarity) are the periodic reconciler
+and scoring jobs.</figcaption>
+</figure>
+
+<h3>2.1 Why eight layers and not one big agent loop</h3>
+
+<p>Agent frameworks routinely collapse data, planning, decision, and
+execution into a single <em>graph</em> with shared scratch state. That is
+fast to demo and very hard to audit. StockRipper instead enforces a one-way
+contract at every layer boundary: <em>"the next layer may only see this
+structured envelope, and must validate it on entry."</em>
+The benefit is that one can replace any single layer in isolation — for
+example, swapping the OpenAI client for a local Llama model, or switching
+the judge from a Sortino-objective LLM to a deterministic rule — without
+disturbing the rest of the system. The cost is that every layer transition
+is a Pydantic <code>model_validate</code> call, which in practice runs in
+microseconds and pays for itself the first time an LLM emits unparseable
+JSON.</p>
+
+<h3>2.2 The eight strategy tracks</h3>
+
+<p>Eight tracks ship as defaults. They share the same agent roster and
+the same candidate universe before per-track filtering, but each has its
+own risk policy, judge objective, and universe-eligibility policy.</p>
+
+<table>
+<thead><tr><th>Track</th><th>Philosophy</th><th>Judge objective</th><th>Universe</th></tr></thead>
+<tbody>
+<tr><td>conservative</td><td>Capital preservation; ETFs and mega-caps only.</td><td>Calmar</td><td>ADV &ge; $25M, mega/large cap</td></tr>
+<tr><td>balanced</td><td>Mainstream diversified equity + ETFs + single-leg options.</td><td>Sharpe</td><td>ADV &ge; $10M, mega&ndash;mid cap</td></tr>
+<tr><td>aggressive</td><td>Growth-first; accepts drawdown; shorts and option spreads.</td><td>Return</td><td>ADV &ge; $2M, mega&ndash;small cap, low-visibility bucket on</td></tr>
+<tr><td>concentrated</td><td>High-conviction, narrow book; shorts allowed.</td><td>Sortino</td><td>ADV &ge; $10M, mega&ndash;mid cap</td></tr>
+<tr><td>yolo</td><td>Maximum profit pursuit; micro-caps, leveraged ETFs.</td><td>Return</td><td>ADV &ge; $0.5M, all caps, all instruments</td></tr>
+<tr><td>quant_signal</td><td>Disciplined long/short factor mimic.</td><td>Sharpe</td><td>ADV &ge; $5M, mega&ndash;small cap, equities/ETFs</td></tr>
+<tr><td>random_baseline</td><td>Statistical control; samples randomly.</td><td>Return</td><td>ADV &ge; $10M, ETFs + mega&ndash;mid cap</td></tr>
+<tr><td>benchmark</td><td>Buy-and-hold SPY anchor.</td><td>Return</td><td>SPY only</td></tr>
+</tbody>
+</table>
+
+<p>Pairwise comparison across tracks is one of the system's first-class
+outputs. The <em>random_baseline</em> and <em>benchmark</em> tracks exist
+specifically so that the aggressive tracks' Sharpe and cumulative-return
+deltas can be measured against null hypotheses.</p>
+
+<h2 id="data">3. The data plane</h2>
+
+<p>The data plane is small by design. Each external source lives behind
+a narrow adapter so that it can be either hit live (for production runs)
+or stubbed with deterministic in-memory data (for tests).</p>
+
+<table>
+<thead><tr><th>Adapter</th><th>Source</th><th>Module</th></tr></thead>
+<tbody>
+<tr><td>Market data</td><td>Alpaca Market Data API (snapshots, bars, news)</td><td><code>src/stockripper/data/market_data.py</code></td></tr>
+<tr><td>News</td><td>Alpaca News API</td><td><code>src/stockripper/data/news.py</code></td></tr>
+<tr><td>SEC filings</td><td>EDGAR JSON facts API</td><td><code>src/stockripper/data/sec_edgar.py</code></td></tr>
+<tr><td>Fundamentals</td><td>Derived from EDGAR facts and Alpaca snapshots</td><td><code>src/stockripper/data/fundamentals.py</code></td></tr>
+<tr><td>Universe builder</td><td>Per-track filter over Alpaca assets + snapshots</td><td><code>src/stockripper/data/universe.py</code></td></tr>
+<tr><td>Live snapshot provider</td><td>Adapter wrapper over Alpaca</td><td><code>src/stockripper/data/live.py</code></td></tr>
+</tbody>
+</table>
+
+<h3>3.1 Universe construction</h3>
+
+<p>The universe builder takes a <code>UniverseBuildRequest</code>
+(<em>track_id</em>, <em>as_of</em>, <em>window_id</em>, <em>limit</em>)
+and emits a <code>UniverseBuildResult</code> whose
+<code>candidates</code> field is an ordered tuple of
+<code>Candidate</code> records sorted by 20-day average dollar volume
+descending. Every admit and reject is recorded with a
+<code>CandidateReason</code> code so the rejection trail is auditable
+after the fact:</p>
+
+<pre class="code">candidate := AssetRecord(tradable, shortable, fractionable, ETF flags)
+           + AssetSnapshot(last_price, adv_usd_20d, market_cap_usd,
+                            recent_8k_within_days, recent_news_count_30d)
+
+admit if and only if:
+    asset.tradable
+    snapshot.last_price &gt;= policy.price_floor_usd
+    snapshot.adv_usd_20d &gt;= policy.min_adv_usd
+    MarketCapBand.classify(snapshot.market_cap_usd) in policy.allowed_bands
+    derived instrument type in policy.instrument_types_allowed
+    [optional] hidden-gem screen: recent_news_count_30d &le; max_news_30d
+                                  AND recent_8k_within_days &le; require_recent_catalyst_days
+</pre>
+
+<p>The hidden-gem path is what gives the <em>aggressive</em> and
+<em>yolo</em> tracks access to under-covered names whose price action a
+trained eye might catch and whose news flow a momentum factor would
+under-weight. It is intentionally disabled on the conservative tracks
+because survivorship and selection bias on the long tail are extreme.</p>
+
+<h2 id="agents">4. The agent council</h2>
+
+<p>The council is 31 specialised agents grouped into four classes: <em>research analysts</em>, <em>quant signals</em>, <em>skeptics</em>, and
+<em>risk managers</em>. Every agent has a content-addressed prompt
+(<code>src/stockripper/agents/prompts/</code>), a strict Pydantic output
+schema, and a registry binding that pins it to one or more tracks. A
+single decision window for one <em>(track, symbol)</em> pair runs all of
+the track's bound agents in parallel via <code>asyncio.gather</code>.</p>
+
+<figure>
+<pre class="diagram">
+                       +-----------------------+
+                       |   (track, symbol)     |
+                       |    DecisionPacket     |
+                       +----------+------------+
+                                  |
+              +-------------------+--------------------+
+              |                   |                    |
+              v                   v                    v
+   +-----------------+ +-------------------+ +-------------------+
+   | Research Analyst| |  Quant Signal     | |   Skeptic         |
+   | (10 agents,     | |  (8 agents,       | |   (mandatory,     |
+   |  fundamentals,  | |  factor mimics)   | |   adversarial)    |
+   |  news, EDGAR)   | |                   | |                   |
+   +--------+--------+ +---------+---------+ +---------+---------+
+            |                    |                     |
+            +----+---------------+---------------------+
+                 |
+                 v
+        +------------------+
+        |  Risk Manager    |
+        |  (mandatory,     |
+        |   position-aware)|
+        +--------+---------+
+                 |
+                 v
+        +------------------+
+        |  Judge LLM       |   <- per-track objective function
+        |  emits ActionPlan|
+        +------------------+
+</pre>
+<figcaption><span class="caption-label">Figure 2.</span> Council
+composition for a single (track, symbol) packet. Skeptic and risk-manager
+passes run on every track, even <em>yolo</em>, to ensure adversarial
+critique is always present even when the judge's objective is raw
+return.</figcaption>
+</figure>
+
+<h3>4.1 Why a fixed roster and not free agent dispatch</h3>
+
+<p>A reactive agent dispatcher would let the LLM decide which experts to
+consult. That sounds appealing and consistently goes wrong because the
+LLM's first instinct is to consult the agents that agree with it.
+StockRipper fixes the roster per track in the registry. The judge sees
+every council member's vote, including dissenting and quarantined ones,
+and the spec requires that skeptic and risk-manager output is always part
+of the judge's input — that is, the adversaries cannot be voted out.</p>
+
+<h3>4.2 Quarantine</h3>
+
+<p>An agent run is <em>quarantined</em> when any of the following hold:
+the LLM returned malformed JSON; the output failed Pydantic validation;
+the call timed out; or the OpenAI API returned a non-recoverable error.
+A quarantined <code>AgentRunResult</code> is still persisted in the
+ledger with a <code>quarantine_reason</code> string so the run is
+reproducible. The judge sees that a vote is missing and weighs the
+council accordingly. The system does not silently drop work.</p>
+
+<h2 id="tracks">5. Strategy tracks and judges</h2>
+
+<p>The judge is itself an LLM agent, prompted with the track's objective
+function. The default judges optimise for <em>Sharpe</em>, <em>Sortino</em>,
+<em>Calmar</em>, or <em>raw cumulative return</em> depending on the
+track. Crucially, the judge does not place orders. It emits an
+<code>ActionPlan</code> consisting of a portfolio posture
+(<em>defensive</em> / <em>balanced</em> / <em>tilted</em> /
+<em>aggressive</em>), an objective label, free-text rationale, and a
+list of <code>ActionPlanItem</code> records each specifying instrument,
+direction, target notional or percentage of track equity, and order
+type.</p>
+
+<p>Determinism comes from three places. First, the prompt is content-addressed:
+the SHA-256 of the prompt text is recorded with every agent run so the
+historical replay is exact even if a prompt is later edited. Second, the
+LLM is invoked with <code>temperature=0</code> wherever feasible. Third,
+the work-list construction (the cartesian product of track &times; symbol)
+is sorted, and the <code>client_order_id</code> generator hashes
+<em>track + window + packet + symbol</em> so re-running the same window
+upserts rather than duplicates.</p>
+
+<h2 id="risk">6. Risk gates and execution</h2>
+
+<p>The risk gate is the only layer that can refuse the judge. It runs
+twice — once for the universal floors, once for the per-track risk policy
+— and emits a <code>RiskVerdict</code> of
+<code>allowed</code> / <code>clipped</code> / <code>rejected</code>
+for every <code>ActionPlanItem</code>.</p>
+
+<h3>6.1 Universal floors</h3>
+
+<p>Universal floors are <em>non-bypassable</em>. They exist to keep the
+simulation coherent and to keep the project from ever turning into a real-money
+trader by accident.</p>
+
+<ol>
+<li><strong>Paper-only.</strong> <code>StockripperSettings.assert_paper_only()</code>
+fails closed if the configured Alpaca base URL is not the paper endpoint.
+Every command that talks to Alpaca calls this first; reconciliation
+calls it before opening the MCP subprocess.</li>
+<li><strong>Per-order notional cap.</strong> No single order may exceed
+a hardcoded dollar fraction of the most recent reconciled account equity,
+regardless of track aggressiveness.</li>
+<li><strong>Per-symbol concentration cap.</strong> No track may hold more
+than a fixed fraction of its equity in one symbol.</li>
+<li><strong>Per-day order count cap.</strong> Prevents an LLM agent's
+hallucinated rebalancing loop from emitting hundreds of orders.</li>
+<li><strong>Reconciliation drift refusal.</strong> If the local ledger
+disagrees with Alpaca's reported positions by more than a small
+tolerance, every track is paused until an operator intervenes.</li>
+</ol>
+
+<div class="note"><strong>Design note:</strong> the floors are deliberately
+small in number and large in effect. Any logic that could be expressed as
+a floor and as a per-track policy is expressed as a per-track policy
+instead, with one exception: the paper-only check. It is duplicated as a
+floor because the worst-case outcome of getting it wrong is catastrophic.
+Defense in depth here pays.</div>
+
+<h3>6.2 Per-track risk policy</h3>
+
+<p>The per-track policy lives in <code>risk_policies.params_json</code>
+in the ledger and is read into a typed Pydantic record at gate time. It
+covers maximum portfolio drawdown, maximum gross and net exposure,
+maximum new positions per window, allowed order types, leverage,
+and short-sale permission. The eight default policies range from
+<em>cap drawdown at 4%, no shorts, no options</em> to <em>cap drawdown
+at 30%, 2&times; leverage, all single-leg and spread options
+permitted</em>.</p>
+
+<h3>6.3 Execution</h3>
+
+<p>The execution adapter (<code>src/stockripper/execution/adapter.py</code>)
+takes the gated <code>ActionPlanItem</code> list and translates each item
+into an order request. The <code>client_order_id</code> is generated by
+<code>derive_client_order_id(track_id, window_run_id, packet_id, symbol, side)</code>
+— a deterministic SHA-256 fold — so re-submitting an identical plan
+produces an idempotent duplicate detection on Alpaca's side and a
+<code>SubmissionStatus.duplicate</code> result locally.</p>
+
+<p>Two broker implementations are available. The <code>MockBrokerClient</code>
+synthesises immediate fills at the last reconciled price and is used by
+tests, demos, and dry runs. The <code>AlpacaPaperBrokerClient</code> uses
+<code>alpaca-py</code> against the paper endpoint and is the production
+path. Both expose the same <code>BrokerClient</code> protocol so the
+risk gate and adapter logic are identical across them.</p>
+
+<h2 id="scoring">7. Scoring, leaderboard, and regret</h2>
+
+<p>Scoring runs after every window and is reproducible from the ledger
+alone. It produces three artifact tables: per-recommendation
+<code>AgentScore</code>, per-track <code>TrackLeaderboardEntry</code>,
+and per-judge <code>JudgeRegretEntry</code>.</p>
+
+<h3>7.1 Reward</h3>
+
+<p>Each recommendation gets a directional excess-return reward against
+SPY over its declared <em>time_horizon_days</em>. The sign convention is:</p>
+
+<pre class="code">action in {buy, buy_to_open_option}        ->  reward = excess
+action in {sell, short, cover, sell_to_open_option}
+                                          ->  reward = -excess
+action in {hold, avoid, multi_leg}         ->  reward = 0
+unknown action                             ->  reward = None  (skipped)</pre>
+
+<p>The provider for prices is a <code>PriceProvider</code> Protocol so
+that the regret calculation, the leaderboard, and the unit tests share
+one substitution point. The default live provider hits Alpaca; the test
+provider is an in-memory dictionary.</p>
+
+<h3>7.2 Leaderboard</h3>
+
+<p>Per-track metrics are computed from <code>track_snapshots</code> taken
+at each reconciliation. The metrics are <em>cumulative return</em>
+(percentage), <em>Sharpe</em>, <em>Sortino</em>, <em>Calmar</em>,
+<em>max drawdown</em>, <em>win rate</em>, and <em>turnover</em>. Sharpe
+and Sortino use the sqrt-of-252 annualisation factor; max drawdown is
+peak-to-trough on a daily snapshot series; turnover is the sum of fill
+notional divided by mean track equity. Snapshots taken on the same day
+are collapsed to the latest before computation, so multiple intraday
+reconciles do not inflate the volatility estimate.</p>
+
+<h3>7.3 Judge regret</h3>
+
+<p>For each (judge, track, date), regret is the difference between the
+reward earned by the recommendation the judge picked and the reward that
+would have been earned by the best-alternative recommendation in the
+same proposal set. Regret of zero means the judge picked the best;
+positive regret quantifies how much the judge left on the table.</p>
+
+<p>The MVP regret calculation treats a recommendation as "selected" if
+the judge's <code>ActionPlan</code> contains a non-HOLD action for the
+same symbol. A planned improvement is for the judge prompt to emit an
+explicit <code>contributing_recommendation_ids</code> list so the
+attribution is exact rather than inferred.</p>
+
+<h2 id="dashboard">8. The live dashboard</h2>
+
+<p>The dashboard is a single FastAPI process serving a vanilla-JS SPA at
+<code>/</code>, REST endpoints under <code>/api/</code>, and a
+WebSocket <code>/ws/events</code> live feed.</p>
+
+<figure>
+<pre class="diagram">
+   stockripper run-day  --------+
+   (separate process)            \\
+                                  \\  POST /api/events
+                                   v       (DashboardEvent JSON)
++--------------------------------------------------------------+
+|              FastAPI Dashboard Process (uvicorn)             |
+|                                                              |
+|   +-----------------+         +-----------------------+      |
+|   |  /api/events    | ----->  |     EventBus          |      |
+|   |  (POST)         |         |  (asyncio.Queue per   |      |
+|   +-----------------+         |   subscriber, drop-   |      |
+|                               |   oldest on full)     |      |
+|   +-----------------+         +-----------+-----------+      |
+|   |  /ws/events     | &lt;-------+           |                  |
+|   |  (subscriber)   |                     |                  |
+|   +-----------------+                     |                  |
+|                                           v                  |
+|   +----------------------+   +----------------------+        |
+|   |  /api/runs           |   |   Browser SPA         |       |
+|   |  /api/tracks         |   |  (Live Council Feed,  |       |
+|   |  /api/leaderboard    |   |   Recent Runs,        |       |
+|   |  /api/agent-scores   |   |   Leaderboard,        |       |
+|   |  /api/judge-regret   |   |   Agent Scores)       |       |
+|   +----------+-----------+   +----------------------+        |
+|              |                                               |
+|              v                                               |
+|   +----------------------+                                   |
+|   |   Ledger (read-only) |                                   |
+|   +----------------------+                                   |
++--------------------------------------------------------------+
+</pre>
+<figcaption><span class="caption-label">Figure 3.</span> Cross-process
+event bridging. The orchestrator process (<code>run-day</code>) pushes
+<code>DashboardEvent</code> envelopes over HTTP to the dashboard, which
+republishes them through an in-memory EventBus to every connected
+WebSocket subscriber.</figcaption>
+</figure>
+
+<h3>8.1 Cross-process event flow</h3>
+
+<p>Originally the EventBus was in-process only: orchestrator and dashboard
+had to live in the same Python process. That is operationally annoying
+because uvicorn wants to own the event loop and the trading-day runner
+wants to own the event loop too. The solution was a small HTTP push:
+<code>HttpEventEmitter</code> on the orchestrator side posts to
+<code>/api/events</code> on the dashboard, which deserialises into a
+<code>DashboardEvent</code> and republishes through the local bus. Either
+process can fail independently; emission errors are swallowed on the
+orchestrator side so the trading-day path is never broken by a dashboard
+outage.</p>
+
+<h3>8.2 Lifecycle events</h3>
+
+<table>
+<thead><tr><th>Event</th><th>Emitted by</th><th>Carries</th></tr></thead>
+<tbody>
+<tr><td><code>window_started</code></td><td>run_window entry</td><td>track_ids, symbols_by_track</td></tr>
+<tr><td><code>track_started</code></td><td>per-track fan-out</td><td>track_id, symbol, packet_id</td></tr>
+<tr><td><code>agent_completed</code></td><td>each agent return</td><td>agent_id, status, quarantine_reason</td></tr>
+<tr><td><code>recommendation_emitted</code></td><td>research/quant agents</td><td>recommendation_id, action, conviction</td></tr>
+<tr><td><code>judge_decided</code></td><td>per-track judge</td><td>posture, item_count, rationale</td></tr>
+<tr><td><code>action_submitted</code></td><td>execution adapter</td><td>client_order_id, status, reason</td></tr>
+<tr><td><code>track_completed</code></td><td>per-track join</td><td>outcome, decision items</td></tr>
+<tr><td><code>window_completed</code></td><td>run_window exit</td><td>duration, status counts</td></tr>
+<tr><td><code>kill_switch_changed</code></td><td>CLI / dashboard control</td><td>engaged flag, reason</td></tr>
+<tr><td><code>track_pause_changed</code></td><td>CLI / dashboard control</td><td>track_id, paused flag, reason</td></tr>
+</tbody>
+</table>
+
+<h2 id="opflow">9. Operational flow: a trading day</h2>
+
+<p>The intended operator workflow is a single command in one terminal and
+a browser tab open to the dashboard.</p>
+
+<pre class="code"># terminal 1: dashboard (read-only over the ledger, plus WS feed)
+uv run stockripper dashboard serve --port 8765
+
+# terminal 2: the trading day
+uv run stockripper run-day \
+    --execute --alpaca --no-fake \
+    --dashboard-url http://127.0.0.1:8765
+
+# browser
+open http://127.0.0.1:8765
+</pre>
+
+<p>The <code>run-day</code> command then proceeds as Figure 4 shows.</p>
+
+<figure>
+<pre class="diagram">
+                        START run-day
+                              |
+                              v
+                  +------------------------+
+                  |   Settings load        |
+                  |   Assert paper-only    |  -- universal floor #1
+                  +-----------+------------+
+                              |
+                              v
+                  +------------------------+
+                  |   Build registry       |
+                  |   Resolve per-track    |
+                  |   universe (live or    |
+                  |   canned)              |
+                  +-----------+------------+
+                              |
+                              v
+                  +------------------------+
+                  |   Preflight reconcile  |
+                  |   (account, positions, |
+                  |   snapshot per track)  |
+                  +-----------+------------+
+                              |
+              +---------------+---------------+
+              |   for each scheduled window   |
+              +---------------+---------------+
+                              |
+                              v
+              +-----------------------------+
+              |  Sleep until window time    |  (skipped if --once)
+              |  in America/New_York        |
+              +-------------+---------------+
+                            |
+                            v
+              +-----------------------------+
+              |  run_window:                |
+              |   council x judge x risk    |
+              |   gate x execution adapter  |
+              +-------------+---------------+
+                            |
+                            v
+              +-----------------------------+
+              |  Post-window reconcile      |
+              |  (write fills, snapshots)   |
+              +-------------+---------------+
+                            |
+                            v
+              +-----------------------------+
+              |  Push events to dashboard   |
+              +-------------+---------------+
+                            |
+                            v
+                  next window in list
+                            |
+                            v
+                          DONE
+</pre>
+<figcaption><span class="caption-label">Figure 4.</span> The
+<code>run-day</code> loop. Five decision windows ship as defaults:
+<em>opening</em> (09:35 ET), <em>midmorning</em> (10:30),
+<em>midday</em> (12:00), <em>afternoon</em> (14:00), and <em>close</em>
+(15:50). Each is overridable from the CLI.</figcaption>
+</figure>
+
+<h3>9.1 What "fully autonomous" means here</h3>
+
+<p>No operator action is required between market open and market close.
+The kill switch (<code>stockripper kill on</code>) and the per-track pause
+(<code>stockripper track pause &lt;id&gt;</code>) are the operator's
+only steering controls during the day; both are written to the ledger and
+consulted by the orchestrator at the start of every window so they take
+effect at the next window boundary without requiring the runner to be
+restarted.</p>
+
+<h3>9.2 Failure modes the operator does not need to handle</h3>
+
+<ul>
+<li><strong>LLM timeout.</strong> Quarantined agent run; judge proceeds
+without that vote.</li>
+<li><strong>Alpaca transient HTTP error.</strong> The reconciler logs the
+error and proceeds; the next window will recover.</li>
+<li><strong>Reconciliation drift.</strong> Universal floor; tracks pause
+themselves.</li>
+<li><strong>Universe builder failure.</strong> Falls back to the per-track
+canned mini-universe so the council still runs.</li>
+<li><strong>Dashboard unreachable.</strong> Event posts fail silently;
+the orchestrator continues; the dashboard catches up via REST polling
+when it returns.</li>
+</ul>
+
+<h2 id="tradeoffs">10. Engineering trade-offs</h2>
+
+<h3>10.1 Why Python and not Rust</h3>
+
+<p>The dominant cost in this system is LLM call latency, not local
+computation. Local CPU work is overwhelmingly Pydantic validation,
+SQLAlchemy ORM marshalling, and small numeric reductions over a few
+hundred daily snapshots. Python with strict type hints, <code>uv</code>
+for environment management, and <code>ruff</code> + <code>mypy --strict</code>
+gates gives an acceptably solid base. The economically interesting
+optimisation surface is in prompt design and council composition, not
+in shaving microseconds off the orchestrator.</p>
+
+<h3>10.2 SQLite first, Postgres-ready</h3>
+
+<p>Single-operator paper trading does not need Postgres. SQLite with
+WAL mode handles the workload comfortably and ships with a zero-install
+file-based ledger that is trivially backed up. The schema, however, is
+written against SQLAlchemy 2.x typing and Alembic migrations from day
+one, so moving to Postgres is a connection-string change. Tests run
+against an in-memory SQLite by default and a temp file when multi-connection
+behaviour is required (the dashboard tests, for example, must use a
+file-backed sqlite because <code>:memory:</code> isolates per
+connection).</p>
+
+<h3>10.3 Schema-first agent outputs</h3>
+
+<p>Every agent output is a Pydantic model with <code>extra="forbid"</code>
+and tight field types. The OpenAI client uses structured-output mode so
+the response is constrained at the API boundary. Pydantic validation
+runs on the client side too as a defense in depth. Together these make
+"the LLM returned three keys we don't recognise" impossible without
+explicit code changes.</p>
+
+<h3>10.4 Determinism through hashing</h3>
+
+<p>Run IDs, packet IDs, track-run IDs, recommendation IDs, agent-score
+IDs, and client-order IDs are all deterministic SHA-256 folds of their
+natural keys. Re-running the same window produces idempotent UPSERTs
+across every table. This is what makes replay possible and what makes
+"the system did the same thing on Tuesday as Wednesday on these inputs"
+a verifiable claim rather than a hope.</p>
+
+<h2 id="future">11. Future work</h2>
+
+<ul>
+<li><strong>Explicit judge attribution.</strong> Have the judge emit
+<code>contributing_recommendation_ids</code> so regret attribution is
+exact instead of symbol-matched.</li>
+<li><strong>Options chain enrichment.</strong> The options-spread track
+currently relies on the judge inferring spreads. A chain-snapshot adapter
+would let the council price spreads exactly.</li>
+<li><strong>Walk-forward backtest harness.</strong> The components are
+deterministic enough to drive against historical bars; the missing piece
+is the time-machine wrapper that fixes <em>now</em> per window.</li>
+<li><strong>Per-track sub-accounting.</strong> Today every track sees the
+same Alpaca account equity at snapshot time. A track-attributed
+sub-ledger would let the leaderboard compute per-track equity curves
+even when one Alpaca account hosts every track's orders.</li>
+<li><strong>Council disagreement visualisation.</strong> The dashboard
+shows agent scores but not the within-window vote distribution; the
+spec calls for a disagreement-highlighting view that the SPA does not
+yet render.</li>
+</ul>
+
+<h2 id="refs">12. References and source map</h2>
+
+<table>
+<thead><tr><th>Subsystem</th><th>Primary modules</th></tr></thead>
+<tbody>
+<tr><td>Settings &amp; configuration</td><td><code>src/stockripper/config.py</code></td></tr>
+<tr><td>Ledger schema &amp; migrations</td><td><code>src/stockripper/db/models.py</code>, <code>src/stockripper/alembic/versions/</code></td></tr>
+<tr><td>Repository</td><td><code>src/stockripper/db/repository.py</code></td></tr>
+<tr><td>Data adapters</td><td><code>src/stockripper/data/*.py</code></td></tr>
+<tr><td>Universe builder</td><td><code>src/stockripper/data/universe.py</code>, <code>universe_policy.py</code></td></tr>
+<tr><td>Agent registry &amp; council</td><td><code>src/stockripper/agents/registry.py</code>, <code>src/stockripper/agents/prompts/</code></td></tr>
+<tr><td>Window runner &amp; tracks fan-out</td><td><code>src/stockripper/agents/window_runner.py</code></td></tr>
+<tr><td>Risk gates</td><td><code>src/stockripper/risk/floors.py</code>, <code>gate.py</code>, <code>portfolio.py</code></td></tr>
+<tr><td>Execution adapter</td><td><code>src/stockripper/execution/adapter.py</code>, <code>client_order_id.py</code></td></tr>
+<tr><td>Scoring</td><td><code>src/stockripper/scoring/reward.py</code>, <code>leaderboard.py</code>, <code>judge_regret.py</code></td></tr>
+<tr><td>Dashboard</td><td><code>src/stockripper/dashboard/app.py</code>, <code>events.py</code>, <code>static/index.html</code></td></tr>
+<tr><td>Reconciliation</td><td><code>src/stockripper/agents/reconciliation.py</code></td></tr>
+<tr><td>Day runner</td><td><code>src/stockripper/__main__.py</code> (<code>run_day</code>)</td></tr>
+</tbody>
+</table>
+
+<h3>12.1 Operator quick reference</h3>
+
+<pre class="code"># one-time setup
+uv sync
+uv run stockripper db init
+uv run stockripper tracks seed
+
+# every trading day
+uv run stockripper dashboard serve --port 8765   # in terminal 1
+uv run stockripper run-day \
+    --execute --alpaca --no-fake \
+    --dashboard-url http://127.0.0.1:8765        # in terminal 2
+
+# operator steering controls
+uv run stockripper kill on --reason "operator halt"
+uv run stockripper kill off
+uv run stockripper track pause aggressive --reason "drawdown"
+uv run stockripper track resume aggressive
+
+# inspection
+uv run stockripper universe build --track aggressive
+uv run stockripper scoring leaderboard --window-start 2026-05-01 --window-end 2026-05-30
+</pre>
+
+<p class="small" style="margin-top:36px; text-align:center; border-top:1px solid var(--rule); padding-top:10px;">
+StockRipper &middot; revision 1, May 2026 &middot;
+<a href="https://github.com/rtreit/stockripper">github.com/rtreit/stockripper</a>
+</p>
+
+</div>
+</body>
+</html>

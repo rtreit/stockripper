@@ -11,12 +11,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, sessionmaker
 
-from stockripper.dashboard.events import EventBus
+from stockripper.dashboard.events import DashboardEvent, EventBus
 from stockripper.db.repository import Repository
 
 SessionFactory = Callable[[], Session]
@@ -236,6 +236,25 @@ def build_app(
             return JSONResponse(
                 [_serialize_judge_regret(r) for r in rows],
             )
+
+    @app.post("/api/events", status_code=202)
+    async def push_event(request: Request) -> dict[str, Any]:
+        """Accept a DashboardEvent from a remote orchestrator process.
+
+        Used by ``HttpEventEmitter`` so a separate ``run-window`` process
+        can light up this dashboard's Live Council Feed.
+        """
+
+        try:
+            body = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="invalid json") from exc
+        try:
+            event = DashboardEvent.model_validate(body)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        await bus.publish(event)
+        return {"accepted": True, "event": event.event}
 
     @app.websocket("/ws/events")
     async def ws_events(websocket: WebSocket) -> None:

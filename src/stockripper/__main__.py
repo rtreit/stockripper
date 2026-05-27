@@ -8,11 +8,12 @@ spawns the alpaca-mcp client and writes a track snapshot per enabled track.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import typer
 from alembic import command as alembic_command
@@ -1010,6 +1011,90 @@ def track_status(
 # ---------------------------------------------------------------------------
 # Multi-track window runner
 # ---------------------------------------------------------------------------
+
+# Canned mini-universes per track philosophy, used when --fake is in effect
+# (no Alpaca live data). Keeps offline runs spec-aligned: the operator still
+# does not hand-pick symbols; the universe varies per track. Each list is a
+# small representative slice, not the real eligible universe.
+_CANNED_TRACK_UNIVERSE: Final[dict[str, tuple[str, ...]]] = {
+    "conservative": ("SPY", "AAPL", "MSFT", "JNJ", "BRK.B"),
+    "balanced": ("SPY", "AAPL", "MSFT", "NVDA", "GOOGL", "META"),
+    "aggressive": ("NVDA", "TSLA", "AMD", "PLTR", "SMCI", "COIN", "MSTR"),
+    "concentrated": ("NVDA", "META", "GOOGL", "ASML"),
+    "yolo": ("GME", "AMC", "TSLA", "MSTR", "SMCI", "PLTR", "RIVN", "SOFI"),
+    "quant_signal": ("SPY", "QQQ", "IWM", "NVDA", "AAPL", "MSFT", "AMZN", "META"),
+    "random_baseline": ("SPY", "QQQ", "DIA", "VTI"),
+    "benchmark": ("SPY",),
+}
+_CANNED_FALLBACK_UNIVERSE: Final[tuple[str, ...]] = ("SPY",)
+
+
+def _resolve_universe_per_track(
+    *,
+    track_ids: tuple[str, ...],
+    fake: bool,
+) -> dict[str, tuple[str, ...]]:
+    """Return the candidate symbols each track should evaluate this window.
+
+    * ``--fake``  -> deterministic canned mini-universe per track philosophy.
+    * live mode   -> calls :class:`UniverseBuilder` with Alpaca adapters and
+      surfaces each track's top-N admitted candidates.
+
+    Either way the operator does NOT hand-pick symbols; the per-track
+    eligibility policy decides what enters the council. This matches the
+    spec's intent that the candidate universe is system-discovered, not
+    operator-supplied.
+    """
+
+    if fake:
+        return {
+            tid: _CANNED_TRACK_UNIVERSE.get(tid, _CANNED_FALLBACK_UNIVERSE)
+            for tid in track_ids
+        }
+
+    try:
+        settings = load_settings()
+        settings.assert_paper_only()
+    except Exception as exc:
+        console.print(
+            "[yellow]universe build: live settings unavailable "
+            f"({exc}); falling back to canned mini-universe.[/]"
+        )
+        return {
+            tid: _CANNED_TRACK_UNIVERSE.get(tid, _CANNED_FALLBACK_UNIVERSE)
+            for tid in track_ids
+        }
+
+    from stockripper.data import UniverseBuilder, UniverseBuildRequest
+    from stockripper.data.live import AlpacaAssetsLoader, AlpacaSnapshotProvider
+
+    loader = AlpacaAssetsLoader(settings=settings)
+    snapshot_provider = AlpacaSnapshotProvider(settings=settings)
+    builder = UniverseBuilder(
+        assets_loader=loader,
+        snapshot_provider=snapshot_provider,
+    )
+    today = dt.date.today()
+    out: dict[str, tuple[str, ...]] = {}
+    for tid in track_ids:
+        try:
+            result = builder.build(
+                UniverseBuildRequest(
+                    track_id=tid,
+                    as_of=today,
+                    window_id=f"{today.isoformat()}-adhoc",
+                    limit=25,
+                ),
+            )
+            out[tid] = tuple(c.symbol for c in result.candidates)
+        except KeyError:
+            # Track has no registered universe policy -> tiny fallback.
+            out[tid] = _CANNED_TRACK_UNIVERSE.get(
+                tid, _CANNED_FALLBACK_UNIVERSE,
+            )
+    return out
+
+
 @agents_app.command("run-window")
 def agents_run_window(
     track: list[str] = typer.Option(  # noqa: B008 - typer pattern
@@ -1017,8 +1102,13 @@ def agents_run_window(
         help="Restrict to specific track_ids. Defaults to every enabled track.",
     ),
     symbol: list[str] = typer.Option(  # noqa: B008 - typer pattern
-        ["SPY"], "--symbol", "-s",
-        help="One or more symbols. The runner fans out (track x symbol) in parallel.",
+        [], "--symbol", "-s",
+        help=(
+            "Explicit symbol override (debug/replay only). When omitted, "
+            "the per-track universe builder picks candidates honoring each "
+            "track's liquidity/cap/instrument policy. When supplied, the "
+            "given symbols are used for every track regardless of policy."
+        ),
     ),
     window_label: str = typer.Option(
         "adhoc", "--window-label", help="Window label (e.g. opening, midday, close).",
@@ -1051,6 +1141,13 @@ def agents_run_window(
         None, "--seed", help="rng_seed propagated to every agent run.",
     ),
     database_url: str | None = typer.Option(None, "--database-url"),
+    dashboard_url: str | None = typer.Option(
+        None, "--dashboard-url",
+        help=(
+            "If set, push lifecycle events to a running dashboard server "
+            "(e.g. http://127.0.0.1:8765) so its Live Council Feed lights up."
+        ),
+    ),
 ) -> None:
     """Run every (track, symbol) pair in parallel via the Strategy Tracks Manager.
 
@@ -1071,7 +1168,26 @@ def agents_run_window(
         tuple(track) if track
         else tuple(t.track_id for t in DEFAULT_TRACKS if t.enabled)
     )
-    symbols = tuple(s.upper() for s in symbol)
+    explicit_symbols = tuple(s.upper() for s in symbol)
+    symbols_by_track: dict[str, tuple[str, ...]] | None = None
+    if explicit_symbols:
+        console.print(
+            f"[yellow]override: {len(explicit_symbols)} operator-supplied "
+            f"symbol(s) used for every track (universe builder bypassed).[/]"
+        )
+        symbols = explicit_symbols
+    else:
+        symbols_by_track = _resolve_universe_per_track(
+            track_ids=track_ids, fake=fake,
+        )
+        symbols = ()  # fallback unused when symbols_by_track is set
+        for tid in track_ids:
+            picked = symbols_by_track.get(tid, ())
+            console.print(
+                f"[cyan]track={tid}[/cyan] universe candidates: "
+                f"{len(picked)} ({', '.join(picked[:6])}"
+                f"{'…' if len(picked) > 6 else ''})"
+            )
 
     factory: Any = None
     if persist:
@@ -1133,17 +1249,30 @@ def agents_run_window(
             )
 
     async def _run_all() -> None:
-        result = await run_window(
-            registry=registry,
-            track_ids=track_ids,
-            symbols=symbols,
-            window_label=window_label,
-            rng_seed=seed,
-            persist=persist,
-            session_factory=factory,
-            llm_factory=llm_factory,
-            execution_adapter=execution_adapter,
-        )
+        emitter: Any = None
+        if dashboard_url:
+            from stockripper.dashboard.events import HttpEventEmitter
+            emitter = HttpEventEmitter(dashboard_url)
+            console.print(
+                f"[cyan]dashboard events -> {dashboard_url}/api/events[/cyan]"
+            )
+        try:
+            result = await run_window(
+                registry=registry,
+                track_ids=track_ids,
+                symbols=symbols,
+                symbols_by_track=symbols_by_track,
+                window_label=window_label,
+                rng_seed=seed,
+                persist=persist,
+                session_factory=factory,
+                llm_factory=llm_factory,
+                execution_adapter=execution_adapter,
+                event_emitter=emitter,
+            )
+        finally:
+            if emitter is not None and hasattr(emitter, "aclose"):
+                await emitter.aclose()
         _print_window_result(result)
 
     asyncio.run(_run_all())
@@ -1209,10 +1338,284 @@ def _print_window_result(result: Any) -> None:
         console.print(sub_table)
 
 
+# ---------------------------------------------------------------------------
+# Phase 7 - trading-day runner (preflight + scheduled windows + reconcile)
+# ---------------------------------------------------------------------------
+
+# Default decision windows in US Eastern (market local time). The runner
+# walks them in order, skipping any that have already passed when the
+# command starts.
+_DEFAULT_WINDOWS: Final[tuple[tuple[str, int, int], ...]] = (
+    ("opening", 9, 35),
+    ("midmorning", 10, 30),
+    ("midday", 12, 0),
+    ("afternoon", 14, 0),
+    ("close", 15, 50),
+)
+
+
+async def _do_reconcile(
+    factory: Any, settings: StockripperSettings, label: str,
+    emitter: Any,
+) -> None:
+    from stockripper.dashboard.events import DashboardEvent, EventName
+
+    with session_scope(factory) as session:
+        report = await reconcile_via_mcp(session, settings=settings)
+    console.print(
+        f"[bold green]reconcile {label}[/] equity=${report.account_equity:,.2f} "
+        f"cash=${report.account_cash:,.2f} orders={report.orders_seen} "
+        f"fills={report.fills_seen} snapshots={report.snapshots_written}"
+    )
+    if emitter is not None:
+        with contextlib.suppress(Exception):
+            await emitter.publish(
+                DashboardEvent(
+                    event=EventName.WINDOW_COMPLETED,
+                    payload={
+                        "kind": "reconcile",
+                        "label": label,
+                        "equity": str(report.account_equity),
+                        "cash": str(report.account_cash),
+                        "orders_seen": report.orders_seen,
+                        "fills_seen": report.fills_seen,
+                        "snapshots": report.snapshots_written,
+                    },
+                ),
+            )
+
+
+async def _run_one_scheduled_window(
+    *,
+    registry: Any,
+    track_ids: tuple[str, ...],
+    symbols_by_track: dict[str, tuple[str, ...]] | None,
+    window_label: str,
+    factory: Any,
+    llm_factory: Any,
+    settings: StockripperSettings,
+    execute: bool,
+    alpaca: bool,
+    emitter: Any,
+) -> None:
+    from stockripper.agents.window_runner import run_window
+    from stockripper.execution.adapter import (
+        AlpacaPaperBrokerClient,
+        ExecutionAdapter,
+        MockBrokerClient,
+    )
+
+    execution_adapter: Any = None
+    if execute:
+        broker: Any = (
+            AlpacaPaperBrokerClient(settings) if alpaca else MockBrokerClient()
+        )
+        execution_adapter = ExecutionAdapter(
+            session_factory=factory,
+            broker=broker,
+            window_id=window_label,
+            settings=settings if alpaca else None,
+        )
+
+    console.rule(f"[bold cyan]window={window_label}[/]")
+    result = await run_window(
+        registry=registry,
+        track_ids=track_ids,
+        symbols=(),
+        symbols_by_track=symbols_by_track,
+        window_label=window_label,
+        persist=True,
+        session_factory=factory,
+        llm_factory=llm_factory,
+        execution_adapter=execution_adapter,
+        event_emitter=emitter,
+    )
+    _print_window_result(result)
+
+
+@app.command("run-day")
+def run_day(
+    once: bool = typer.Option(
+        False, "--once/--schedule",
+        help=(
+            "When --once, run every window back-to-back ignoring the wall "
+            "clock (useful for a same-day smoke test). When --schedule "
+            "(default), sleep until each window's time of day in "
+            "America/New_York before running it."
+        ),
+    ),
+    execute: bool = typer.Option(
+        True, "--execute/--no-execute",
+        help="Submit approved orders. --no-execute makes this a dry run.",
+    ),
+    alpaca: bool = typer.Option(
+        True, "--alpaca/--mock",
+        help="--alpaca posts paper orders; --mock uses the in-process broker.",
+    ),
+    fake: bool = typer.Option(
+        False, "--fake/--no-fake",
+        help=(
+            "When --fake, use CannedCouncilLLM and the canned mini-universe; "
+            "use --no-fake to run the OpenAI agents against the live "
+            "Alpaca-built universe."
+        ),
+    ),
+    dashboard_url: str | None = typer.Option(
+        "http://127.0.0.1:8765", "--dashboard-url",
+        help="Dashboard server to push live events to.",
+    ),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    track: list[str] = typer.Option(  # noqa: B008 - typer pattern
+        [], "--track", "-t",
+        help="Restrict to specific track_ids. Defaults to every enabled track.",
+    ),
+    windows: list[str] = typer.Option(  # noqa: B008 - typer pattern
+        [], "--window",
+        help=(
+            "Override the default window list. Format: 'name@HH:MM'. May be "
+            "passed multiple times. Defaults to opening/midmorning/midday/"
+            "afternoon/close in America/New_York."
+        ),
+    ),
+) -> None:
+    """End-to-end trading day: preflight reconcile, every scheduled window, post reconcile.
+
+    This is the **one command** the operator runs at market open. It:
+
+    1. Loads settings, asserts paper-only.
+    2. Builds the registry and resolves the per-track universe.
+    3. Runs a preflight reconcile (account, positions, snapshots).
+    4. For each scheduled window: optionally waits, then runs the council,
+       judge, risk gate, and (when --execute) submits orders to Alpaca paper.
+    5. Reconciles again after the last window so post-fill equity and
+       snapshots land in the ledger for scoring.
+
+    Every lifecycle event is pushed to the configured dashboard so the
+    Live Council Feed lights up in real time.
+    """
+
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy.orm import sessionmaker
+
+    from stockripper.agents.llm import OpenAIStructuredClient
+    from stockripper.agents.registry import build_registry
+    from stockripper.dashboard.events import HttpEventEmitter
+
+    try:
+        settings = load_settings()
+        settings.assert_paper_only()
+    except PaperEndpointError as exc:
+        console.print(f"[bold red]paper-endpoint check failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        console.print(f"[bold red]configuration error:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    parsed_windows: list[tuple[str, int, int]] = []
+    if windows:
+        for entry in windows:
+            try:
+                name, hhmm = entry.split("@", 1)
+                hh, mm = hhmm.split(":", 1)
+                parsed_windows.append((name.strip(), int(hh), int(mm)))
+            except Exception as exc:
+                console.print(f"[bold red]bad --window {entry!r}: {exc}[/]")
+                raise typer.Exit(code=2) from exc
+    else:
+        parsed_windows = list(_DEFAULT_WINDOWS)
+
+    engine = build_engine(database_url)
+    factory = sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+    registry = build_registry()
+    track_ids = (
+        tuple(track) if track
+        else tuple(t.track_id for t in DEFAULT_TRACKS if t.enabled)
+    )
+    symbols_by_track = _resolve_universe_per_track(
+        track_ids=track_ids, fake=fake,
+    )
+    for tid in track_ids:
+        picked = symbols_by_track.get(tid, ())
+        console.print(
+            f"[cyan]track={tid}[/cyan] universe: {len(picked)} "
+            f"({', '.join(picked[:8])}{'…' if len(picked) > 8 else ''})"
+        )
+
+    llm_factory: Any
+    if fake:
+        console.print("[yellow]offline mode: CannedCouncilLLM[/]")
+        llm_factory = None
+    else:
+        api_key = settings.openai_api_key.get_secret_value()
+        default_model = settings.openai_model_default
+        judge_model = settings.openai_model_judge
+        for judge in registry.judges.values():
+            judge.model_id_override = judge_model
+        console.print(
+            f"[green]live LLMs:[/] agents={default_model} judge={judge_model}"
+        )
+
+        def llm_factory(_packet: Any) -> Any:
+            return OpenAIStructuredClient(
+                api_key=api_key, default_model=default_model,
+            )
+
+    async def _drive() -> None:
+        emitter: Any = None
+        if dashboard_url:
+            emitter = HttpEventEmitter(dashboard_url)
+            console.print(
+                f"[cyan]dashboard events -> {dashboard_url}/api/events[/]"
+            )
+        try:
+            await _do_reconcile(factory, settings, "preflight", emitter)
+
+            tz = ZoneInfo("America/New_York")
+            for name, hh, mm in parsed_windows:
+                if not once:
+                    now_et = dt.datetime.now(tz)
+                    target = now_et.replace(
+                        hour=hh, minute=mm, second=0, microsecond=0,
+                    )
+                    if target < now_et:
+                        console.print(
+                            f"[dim]skip window={name} "
+                            f"(target {target.time()} ET already passed)[/]"
+                        )
+                        continue
+                    delta = (target - now_et).total_seconds()
+                    if delta > 0:
+                        console.print(
+                            f"[dim]sleeping {int(delta)}s until window={name} "
+                            f"@ {target.time()} ET[/]"
+                        )
+                        await asyncio.sleep(delta)
+                await _run_one_scheduled_window(
+                    registry=registry,
+                    track_ids=track_ids,
+                    symbols_by_track=symbols_by_track,
+                    window_label=name,
+                    factory=factory,
+                    llm_factory=llm_factory,
+                    settings=settings,
+                    execute=execute,
+                    alpaca=alpaca,
+                    emitter=emitter,
+                )
+                await _do_reconcile(
+                    factory, settings, f"post-{name}", emitter,
+                )
+        finally:
+            if emitter is not None and hasattr(emitter, "aclose"):
+                await emitter.aclose()
+
+    asyncio.run(_drive())
 
 
 # ---------------------------------------------------------------------------
-# Phase 6 — scoring + dashboard
+# Phase 6 - scoring + dashboard
 # ---------------------------------------------------------------------------
 scoring_app = typer.Typer(
     help="Score recommendations, compute leaderboards, and compute judge regret.",
@@ -1391,8 +1794,14 @@ def dashboard_serve(
 
     factory = _scoring_session_factory(database_url)
     app_instance = build_app(session_factory=factory)
+    resolved_db = factory.kw["bind"].url if hasattr(factory, "kw") else "unknown"
     console.print(
         f"[bold green]StockRipper dashboard[/bold green] http://{host}:{port}"
+    )
+    console.print(f"[dim]database: {resolved_db}[/dim]")
+    console.print(
+        f"[dim]push events: POST http://{host}:{port}/api/events "
+        "(use --dashboard-url on run-window)[/dim]"
     )
     uvicorn.run(app_instance, host=host, port=port, log_level="info")
 
