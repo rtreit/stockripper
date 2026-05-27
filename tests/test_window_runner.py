@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from stockripper.agents.canned_llm import CannedCouncilLLM
 from stockripper.agents.registry import build_registry
 from stockripper.agents.schemas import EvidencePacket
+from stockripper.agents.schemas import JudgeDecision as JudgeDecisionSchema
 from stockripper.agents.window_runner import run_window
 from stockripper.db import Base, Repository, build_engine
 from stockripper.db.models import AgentRun, JudgeDecision, Run, TrackRun
@@ -253,3 +254,184 @@ async def test_run_window_no_persist_skips_db(
     # No rows should exist in our fixture DB.
     with session_factory() as s:
         assert s.query(Run).filter(Run.run_id == result.run_id).one_or_none() is None
+
+
+# --------------------------------------------------------------------------- #
+# Phase 5 — execution wiring
+# --------------------------------------------------------------------------- #
+class _BuyingCannedLLM(CannedCouncilLLM):
+    """Variant that emits a single small BUY action so the execution
+    adapter has something concrete to submit."""
+
+    def _make_judge_decision(self, agent_id: str) -> JudgeDecisionSchema:
+        from decimal import Decimal
+
+        from stockripper.agents.schemas import (
+            ActionItem,
+            ActionOrderType,
+            ActionPlan,
+            OrderSide,
+            PortfolioPosture,
+            RecommendationInstrument,
+        )
+
+        packet = self._require_packet(agent_id)
+        when = self._moment()
+        seed = self._stable_id_seed(agent_id, "plan", packet.symbol)
+        item = ActionItem(
+            action_id=f"act_{seed}",
+            track_id=packet.track_id,
+            symbol=packet.symbol,
+            instrument=RecommendationInstrument.EQUITY,
+            side=OrderSide.BUY,
+            target_notional_usd=Decimal("500"),
+            order_type=ActionOrderType.MARKET,
+            rationale=f"[canned-buy] {agent_id}: smoke buy for execution test.",
+        )
+        plan = ActionPlan(
+            decision_id=f"plan_{seed}",
+            track_id=packet.track_id,
+            judge_agent_id=agent_id,
+            judge_agent_version="1.0.0",
+            portfolio_posture=PortfolioPosture.NET_LONG,
+            items=(item,),
+            rationale="[canned-buy] one small BUY for the execution smoke test.",
+            objective_label="offline_canned_judge",
+            created_at=when,
+        )
+        return JudgeDecisionSchema(plan=plan, provenance=None)
+
+
+def _buying_llm_factory(packet: EvidencePacket) -> _BuyingCannedLLM:
+    return _BuyingCannedLLM(packet=packet, clock=_FROZEN_NOW)
+
+
+async def test_run_window_with_execution_adapter_writes_orders_and_fills(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """End-to-end: run a one-track window through the mock execution adapter
+    and verify orders + fills land in the ledger, plus the action's
+    risk_status is 'approved'."""
+
+    from stockripper.db.models import DecisionAction, Fill, Order
+    from stockripper.execution.adapter import (
+        ExecutionAdapter,
+        MockBrokerClient,
+        SubmissionStatus,
+    )
+
+    registry = build_registry()
+    adapter = ExecutionAdapter(
+        session_factory=session_factory,
+        broker=MockBrokerClient(now=_FROZEN_NOW),
+        window_id="opening",
+    )
+    result = await run_window(
+        registry=registry,
+        track_ids=("balanced",),
+        symbols=("AAPL",),
+        window_label="opening",
+        config_hash="cfg-exec",
+        rng_seed=11,
+        now=_FROZEN_NOW,
+        llm_factory=_buying_llm_factory,
+        session_factory=session_factory,
+        execution_adapter=adapter,
+    )
+    assert result.status == "ok"
+    assert len(result.submissions) == 1
+    sub = result.submissions[0]
+    assert sub.status == SubmissionStatus.SUBMITTED
+    assert sub.track_id == "balanced"
+    assert sub.client_order_id is not None
+
+    with session_factory() as s:
+        orders = s.query(Order).all()
+        assert len(orders) == 1
+        fills = s.query(Fill).all()
+        assert len(fills) == 1
+        action_rows = s.query(DecisionAction).all()
+        assert len(action_rows) == 1
+        assert action_rows[0].risk_status == "approved"
+
+
+async def test_run_window_execution_idempotent_on_replay(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Re-running the same window with the same inputs collapses onto the
+    existing order via deterministic client_order_id."""
+
+    from stockripper.db.models import Order
+    from stockripper.execution.adapter import (
+        ExecutionAdapter,
+        MockBrokerClient,
+        SubmissionStatus,
+    )
+
+    registry = build_registry()
+
+    async def _drive() -> tuple[str, str | None]:
+        adapter = ExecutionAdapter(
+            session_factory=session_factory,
+            broker=MockBrokerClient(now=_FROZEN_NOW),
+            window_id="opening",
+        )
+        result = await run_window(
+            registry=registry,
+            track_ids=("balanced",),
+            symbols=("AAPL",),
+            window_label="opening",
+            config_hash="cfg-exec-replay",
+            rng_seed=11,
+            now=_FROZEN_NOW,
+            llm_factory=_buying_llm_factory,
+            session_factory=session_factory,
+            execution_adapter=adapter,
+        )
+        sub = result.submissions[0]
+        return sub.status.value, sub.client_order_id
+
+    status_a, coid_a = await _drive()
+    status_b, coid_b = await _drive()
+
+    assert coid_a == coid_b
+    assert status_a == SubmissionStatus.SUBMITTED.value
+    assert status_b == SubmissionStatus.DUPLICATE.value
+
+    with session_factory() as s:
+        orders = s.query(Order).all()
+        assert len(orders) == 1  # Idempotent — no duplicate row.
+
+
+async def test_run_window_execution_skipped_when_kill_engaged(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """If the kill switch is engaged pre-window, no submissions happen at all."""
+
+    from stockripper.execution.adapter import ExecutionAdapter, MockBrokerClient
+
+    registry = build_registry()
+    with session_factory() as s:
+        repo = Repository(s)
+        repo.engage_kill_switch(reason="ops_drill", engaged_by="test", when=_FROZEN_NOW)
+        s.commit()
+
+    adapter = ExecutionAdapter(
+        session_factory=session_factory,
+        broker=MockBrokerClient(now=_FROZEN_NOW),
+        window_id="opening",
+    )
+    result = await run_window(
+        registry=registry,
+        track_ids=("balanced",),
+        symbols=("AAPL",),
+        window_label="opening",
+        config_hash="cfg-kill-exec",
+        now=_FROZEN_NOW,
+        llm_factory=_buying_llm_factory,
+        session_factory=session_factory,
+        execution_adapter=adapter,
+    )
+    assert result.status == "aborted_kill"
+    assert result.submissions == ()
+
