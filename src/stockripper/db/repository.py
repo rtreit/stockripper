@@ -17,15 +17,18 @@ from sqlalchemy.orm import Session
 
 from stockripper.db.models import (
     AgentRun,
+    AgentScore,
     DecisionAction,
     Fill,
     JudgeDecision,
+    JudgeRegretEntry,
     KillSwitchState,
     Order,
     Recommendation,
     RiskPolicy,
     Run,
     StrategyTrack,
+    TrackLeaderboardEntry,
     TrackPauseState,
     TrackRun,
     TrackSnapshot,
@@ -624,6 +627,194 @@ class Repository:
 
     def list_track_pause_states(self) -> list[TrackPauseState]:
         stmt = select(TrackPauseState).order_by(TrackPauseState.track_id)
+        return list(self.session.execute(stmt).scalars())
+
+    # ------------------------------------------------------------------
+    # Phase 6 — scoring (agent_scores, track_leaderboard, judge_regret)
+    # ------------------------------------------------------------------
+    def upsert_agent_score(
+        self,
+        *,
+        score_id: str,
+        agent_id: str,
+        track_id: str,
+        as_of_date: dt.date,
+        reward_score: Decimal,
+        observation_count: int,
+        calibration_score: Decimal | None = None,
+        evidence_quality_score: Decimal | None = None,
+        shadow_return_pct: Decimal | None = None,
+        selected_return_pct: Decimal | None = None,
+    ) -> AgentScore:
+        existing = self.session.get(AgentScore, score_id)
+        if existing is not None:
+            existing.reward_score = reward_score
+            existing.calibration_score = calibration_score
+            existing.evidence_quality_score = evidence_quality_score
+            existing.shadow_return_pct = shadow_return_pct
+            existing.selected_return_pct = selected_return_pct
+            existing.observation_count = observation_count
+            self.session.flush()
+            return existing
+        row = AgentScore(
+            score_id=score_id,
+            agent_id=agent_id,
+            track_id=track_id,
+            as_of_date=as_of_date,
+            reward_score=reward_score,
+            calibration_score=calibration_score,
+            evidence_quality_score=evidence_quality_score,
+            shadow_return_pct=shadow_return_pct,
+            selected_return_pct=selected_return_pct,
+            observation_count=observation_count,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def list_agent_scores(
+        self, *, track_id: str | None = None,
+        agent_id: str | None = None,
+        as_of_date: dt.date | None = None,
+    ) -> list[AgentScore]:
+        stmt = select(AgentScore)
+        if track_id is not None:
+            stmt = stmt.where(AgentScore.track_id == track_id)
+        if agent_id is not None:
+            stmt = stmt.where(AgentScore.agent_id == agent_id)
+        if as_of_date is not None:
+            stmt = stmt.where(AgentScore.as_of_date == as_of_date)
+        stmt = stmt.order_by(
+            AgentScore.as_of_date.desc(),
+            AgentScore.reward_score.desc(),
+        )
+        return list(self.session.execute(stmt).scalars())
+
+    def upsert_leaderboard_entry(
+        self,
+        *,
+        leaderboard_id: str,
+        window_start: dt.date,
+        window_end: dt.date,
+        track_id: str,
+        cumulative_return_pct: Decimal | None = None,
+        sharpe: Decimal | None = None,
+        sortino: Decimal | None = None,
+        calmar: Decimal | None = None,
+        max_drawdown_pct: Decimal | None = None,
+        win_rate: Decimal | None = None,
+        turnover: Decimal | None = None,
+        rank: int | None = None,
+    ) -> TrackLeaderboardEntry:
+        existing = self.session.get(TrackLeaderboardEntry, leaderboard_id)
+        if existing is not None:
+            existing.cumulative_return_pct = cumulative_return_pct
+            existing.sharpe = sharpe
+            existing.sortino = sortino
+            existing.calmar = calmar
+            existing.max_drawdown_pct = max_drawdown_pct
+            existing.win_rate = win_rate
+            existing.turnover = turnover
+            existing.rank = rank
+            self.session.flush()
+            return existing
+        row = TrackLeaderboardEntry(
+            leaderboard_id=leaderboard_id,
+            window_start=window_start,
+            window_end=window_end,
+            track_id=track_id,
+            cumulative_return_pct=cumulative_return_pct,
+            sharpe=sharpe,
+            sortino=sortino,
+            calmar=calmar,
+            max_drawdown_pct=max_drawdown_pct,
+            win_rate=win_rate,
+            turnover=turnover,
+            rank=rank,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def list_leaderboard(
+        self,
+        *,
+        window_start: dt.date | None = None,
+        window_end: dt.date | None = None,
+    ) -> list[TrackLeaderboardEntry]:
+        stmt = select(TrackLeaderboardEntry)
+        if window_start is not None:
+            stmt = stmt.where(TrackLeaderboardEntry.window_start == window_start)
+        if window_end is not None:
+            stmt = stmt.where(TrackLeaderboardEntry.window_end == window_end)
+        stmt = stmt.order_by(
+            TrackLeaderboardEntry.window_end.desc(),
+            TrackLeaderboardEntry.rank.asc().nullslast(),
+        )
+        return list(self.session.execute(stmt).scalars())
+
+    def upsert_judge_regret(
+        self,
+        *,
+        regret_id: str,
+        judge_agent_id: str,
+        track_id: str,
+        as_of_date: dt.date,
+        selected_reward: Decimal,
+        best_alternative_reward: Decimal,
+        regret: Decimal,
+        observation_count: int,
+    ) -> JudgeRegretEntry:
+        existing = self.session.get(JudgeRegretEntry, regret_id)
+        if existing is not None:
+            existing.selected_reward = selected_reward
+            existing.best_alternative_reward = best_alternative_reward
+            existing.regret = regret
+            existing.observation_count = observation_count
+            self.session.flush()
+            return existing
+        row = JudgeRegretEntry(
+            regret_id=regret_id,
+            judge_agent_id=judge_agent_id,
+            track_id=track_id,
+            as_of_date=as_of_date,
+            selected_reward=selected_reward,
+            best_alternative_reward=best_alternative_reward,
+            regret=regret,
+            observation_count=observation_count,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def list_judge_regret(
+        self, *, track_id: str | None = None,
+    ) -> list[JudgeRegretEntry]:
+        stmt = select(JudgeRegretEntry)
+        if track_id is not None:
+            stmt = stmt.where(JudgeRegretEntry.track_id == track_id)
+        stmt = stmt.order_by(JudgeRegretEntry.as_of_date.desc())
+        return list(self.session.execute(stmt).scalars())
+
+    def list_recommendations(
+        self,
+        *,
+        run_id: str | None = None,
+        track_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> list[Recommendation]:
+        stmt = select(Recommendation)
+        if run_id is not None:
+            stmt = stmt.where(Recommendation.run_id == run_id)
+        if track_id is not None:
+            stmt = stmt.where(Recommendation.track_id == track_id)
+        if agent_id is not None:
+            stmt = stmt.where(Recommendation.agent_id == agent_id)
+        stmt = stmt.order_by(Recommendation.created_at.desc())
+        return list(self.session.execute(stmt).scalars())
+
+    def list_runs(self, *, limit: int = 50) -> list[Run]:
+        stmt = select(Run).order_by(Run.started_at.desc()).limit(limit)
         return list(self.session.execute(stmt).scalars())
 
 

@@ -406,3 +406,121 @@ class TrackPauseState(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — scoring tables (spec §15.2)
+# ---------------------------------------------------------------------------
+class AgentScore(Base):
+    """One reward observation for an (agent, track, as_of_date) triple.
+
+    Reward signal is derived per-recommendation from the realized symbol
+    price move over the recommendation's nominal horizon vs the SPY
+    benchmark over the same horizon. Multiple recommendations from the
+    same agent on the same day collapse into one row keyed by
+    ``(agent_id, track_id, as_of_date)`` so the dashboard can render a
+    stable per-agent leaderboard.
+    """
+
+    __tablename__ = "agent_scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_id", "track_id", "as_of_date",
+            name="uq_agent_scores_agent_track_date",
+        ),
+    )
+
+    score_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    track_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("strategy_tracks.track_id"), nullable=False,
+    )
+    as_of_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    reward_score: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    calibration_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 6), nullable=True,
+    )
+    evidence_quality_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 6), nullable=True,
+    )
+    shadow_return_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 6), nullable=True,
+    )
+    selected_return_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 6), nullable=True,
+    )
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+    )
+
+
+class TrackLeaderboardEntry(Base):
+    """One row in the head-to-head track leaderboard for one window."""
+
+    __tablename__ = "track_leaderboard"
+    __table_args__ = (
+        UniqueConstraint(
+            "window_start", "window_end", "track_id",
+            name="uq_track_leaderboard_window_track",
+        ),
+    )
+
+    leaderboard_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_start: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    window_end: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    track_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("strategy_tracks.track_id"), nullable=False,
+    )
+    cumulative_return_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 6), nullable=True,
+    )
+    sharpe: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
+    sortino: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
+    calmar: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
+    max_drawdown_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 6), nullable=True,
+    )
+    win_rate: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 6), nullable=True,
+    )
+    turnover: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 6), nullable=True,
+    )
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+    )
+
+
+class JudgeRegretEntry(Base):
+    """Per-(judge, track, as_of_date) regret record.
+
+    Compares the judge's actual selected actions (and their realized
+    reward) against the best-counterfactual judge over the same
+    recommendation set. Drives the spec §8.3 / §19.4 judge leaderboard.
+    """
+
+    __tablename__ = "judge_regret"
+    __table_args__ = (
+        UniqueConstraint(
+            "judge_agent_id", "track_id", "as_of_date",
+            name="uq_judge_regret_judge_track_date",
+        ),
+    )
+
+    regret_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    judge_agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    track_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("strategy_tracks.track_id"), nullable=False,
+    )
+    as_of_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    selected_reward: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    best_alternative_reward: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False,
+    )
+    regret: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+    )
