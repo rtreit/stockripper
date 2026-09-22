@@ -1,0 +1,13 @@
+@using Stockripper.Domain.Execution
+
+@if (Evaluation is not null)
+{
+    <section class="check-section" aria-label="Deterministic risk checks">
+        <h3>Deterministic risk evidence</h3>
+        <CheckList Checks="Evaluation.Checks.Select(item => (item.Code.ToString(), item.Passed, item.Detail))" />
+    </section>
+}
+
+@code {
+    [Parameter] public RiskEvaluation? Evaluation { get; set; }
+}

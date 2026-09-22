@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Stockripper.Application/Stockripper.Application.csproj" />
+    <Project Path="src/Stockripper.Contracts/Stockripper.Contracts.csproj" />
+    <Project Path="src/Stockripper.Domain/Stockripper.Domain.csproj" />
+    <Project Path="src/Stockripper.Host/Stockripper.Host.csproj" />
+    <Project Path="src/Stockripper.Infrastructure/Stockripper.Infrastructure.csproj" />
+    <Project Path="src/Stockripper.Strategy.Worker/Stockripper.Strategy.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Stockripper.Application.Tests/Stockripper.Application.Tests.csproj" />
+    <Project Path="tests/Stockripper.Architecture.Tests/Stockripper.Architecture.Tests.csproj" />
+    <Project Path="tests/Stockripper.Domain.Tests/Stockripper.Domain.Tests.csproj" />
+    <Project Path="tests/Stockripper.Host.Tests/Stockripper.Host.Tests.csproj" />
+    <Project Path="tests/Stockripper.Infrastructure.IntegrationTests/Stockripper.Infrastructure.IntegrationTests.csproj" />
+    <Project Path="tests/Stockripper.Testing/Stockripper.Testing.csproj" />
+  </Folder>
+</Solution>

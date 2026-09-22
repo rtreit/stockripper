@@ -1,0 +1,15 @@
+<ul class="check-list">
+    @foreach (var check in Checks)
+    {
+        <li class="@(check.Passed ? "check-pass" : "check-fail")">
+            <strong>@(check.Passed ? "PASS" : "BLOCK")</strong>
+            <span>@check.Code</span>
+            <small>@check.Detail</small>
+        </li>
+    }
+</ul>
+
+@code {
+    [Parameter, EditorRequired]
+    public IEnumerable<(string Code, bool Passed, string Detail)> Checks { get; set; } = [];
+}

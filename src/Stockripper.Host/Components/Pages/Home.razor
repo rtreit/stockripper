@@ -1,0 +1,569 @@
+@page "/"
+@rendermode InteractiveServer
+@using Stockripper.Application.Execution
+@using Stockripper.Domain.Decisions
+@using Stockripper.Domain.Execution
+@using Stockripper.Domain.Goals
+@using Stockripper.Domain.Sessions
+@using Stockripper.Host.Runtime
+@inject PaperMvpWorkflow Workflow
+@inject StockripperRuntimeState RuntimeState
+
+<PageTitle>Stockripper Paper Operator</PageTitle>
+
+<main class="shell">
+    <header class="masthead">
+        <div>
+            <p class="eyebrow">Stockripper / Phase 1 MVP</p>
+            <h1>Paper execution control room</h1>
+            <p class="lede">Authorize an exact paper Goal, inspect deterministic risk, and exercise the complete simulated Broker lifecycle.</p>
+        </div>
+        <div class="system-state" aria-live="polite">
+            <span class="state-dot" aria-hidden="true"></span>
+            <div><strong>@RuntimeState.Status</strong><span>Simulated PAPER adapter</span></div>
+        </div>
+    </header>
+
+    <section class="safety-banner" aria-label="Trading safety status">
+        <strong>SIMULATED PAPER only.</strong>
+        <span>This build contains no network Broker client, credentials, or live execution path.</span>
+    </section>
+
+    <section class="status-board" aria-label="Persistent execution status">
+        <StatusItem Label="Mode" Value="@(status?.Mode ?? run?.Prepared.Goal.Mode.ToWireValue() ?? "NONE")" />
+        <StatusItem Label="Environment" Value="@(status?.Environment ?? "PAPER")" />
+        <StatusItem Label="Account" Value="@(status?.MaskedAccountIdentifier ?? Mask(PaperMvpConfiguration.ExecutionBinding.ExpectedAccountIdentifier))" />
+        <StatusItem Label="Goal version" Value="@(status?.GoalVersionId.ToString() ?? run?.Prepared.Goal.Id.Value.ToString() ?? "NONE")" />
+        <StatusItem Label="Activation" Value="@(status?.ActivationState ?? run?.Activation?.State.ToString() ?? "NONE")" />
+        <StatusItem Label="Session" Value="@(status?.SessionState ?? run?.Session?.State.ToString() ?? "NONE")" />
+        <StatusItem Label="Kill switch" Value="@(status?.KillSwitchState ?? "UNCONFIGURED")" />
+        <StatusItem Label="Reconciliation" Value="@(status?.ReconciliationState ?? run?.Reconciliation?.Result.ToString() ?? "NONE")" />
+        <StatusItem Label="Intent" Value="@(status?.IntentState ?? run?.Intent?.State.ToString() ?? "NONE")" />
+        <StatusItem Label="Order" Value="@(status?.OrderState ?? run?.Order?.State.ToString() ?? "NONE")" />
+    </section>
+
+    @if (status?.Alerts.Count > 0 || RuntimeState.Status is "DEGRADED" or "FAILED")
+    {
+        <section class="alerts" aria-label="Operational alerts">
+            <h2>Operational alerts</h2>
+            <ul>
+                @foreach (var alert in status?.Alerts ?? [])
+                {
+                    <li>@alert</li>
+                }
+                @if (RuntimeState.Status is "DEGRADED" or "FAILED")
+                {
+                    <li>Runtime recovery or Broker reconciliation needs attention.</li>
+                }
+            </ul>
+        </section>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="message error" role="alert">@errorMessage</div>
+    }
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="message success" role="status">@successMessage</div>
+    }
+
+    @if (run?.Activation?.State == GoalActivationState.ACTIVE)
+    {
+        <section class="authority-controls" aria-label="Goal authority controls">
+            <span>The exact Goal authority is active.</span>
+            <div class="actions split">
+                <button class="secondary" @onclick="PauseActivationAsync" disabled="@isBusy">
+                    Pause new work
+                </button>
+                <button class="danger-button" @onclick="RevokeActivationAsync" disabled="@isBusy">
+                    Permanently revoke authority
+                </button>
+            </div>
+        </section>
+    }
+
+    @if (run is null)
+    {
+        <section class="panel" aria-labelledby="prepare-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Step 1</p><h2 id="prepare-heading">Prepare immutable paper authority</h2></div>
+                <span class="paper-tag">PAPER</span>
+            </div>
+            <div class="form-grid">
+                <label>
+                    <span>Execution mode</span>
+                    <select @bind="selectedMode" disabled="@isBusy">
+                        <option value="PAPER_REVIEW">PAPER_REVIEW</option>
+                        <option value="PAPER_AUTO">PAPER_AUTO</option>
+                    </select>
+                    <small>PAPER_REVIEW needs one exact approval. PAPER_AUTO uses activation authority.</small>
+                </label>
+                <label>
+                    <span>Instrument</span>
+                    <select @bind="instrument" disabled="@isBusy">
+                        <option value="AAPL">AAPL</option>
+                        <option value="MSFT">MSFT</option>
+                    </select>
+                    <small>The MVP policy permits these long-only instruments.</small>
+                </label>
+                <label>
+                    <span>Whole-share quantity</span>
+                    <input type="number" min="1" step="1" @bind="quantity" disabled="@isBusy" />
+                </label>
+                <label>
+                    <span>Limit price</span>
+                    <input type="number" min="0.01" step="0.01" @bind="limitPrice" disabled="@isBusy" />
+                </label>
+                <label>
+                    <span>Capital allocation</span>
+                    <input type="number" min="1000" max="10000" step="100" @bind="capitalAllocation" disabled="@isBusy" />
+                    <small>The policy portfolio limit is 10,000 USD.</small>
+                </label>
+                <label class="full-width">
+                    <span>Objective</span>
+                    <textarea @bind="objective" disabled="@isBusy" rows="3"></textarea>
+                </label>
+            </div>
+            <div class="actions">
+                <button class="primary" @onclick="PrepareAsync" disabled="@isBusy">
+                    @(isBusy ? "Preparing..." : "Prepare Goal and authority summary")
+                </button>
+            </div>
+        </section>
+    }
+    else if (run.Activation is null)
+    {
+        <section class="panel" aria-labelledby="activate-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Step 2</p><h2 id="activate-heading">Authorize the exact paper boundary</h2></div>
+                <span class="paper-tag">@run.Prepared.Goal.Mode.ToWireValue()</span>
+            </div>
+            <dl class="summary-grid">
+                <div><dt>Environment</dt><dd>PAPER</dd></div>
+                <div><dt>Account</dt><dd>@Mask(run.Prepared.Goal.ExecutionBinding!.ExpectedAccountIdentifier)</dd></div>
+                <div><dt>Goal version</dt><dd>@run.Prepared.Goal.Id.Value</dd></div>
+                <div><dt>Risk policy</dt><dd>@run.Prepared.Goal.RiskPolicyVersion.Digest</dd></div>
+                <div><dt>Capital</dt><dd>@run.Prepared.Goal.CapitalAllocation.Amount.ToString("N2") USD</dd></div>
+                <div><dt>Order</dt><dd>@run.Prepared.Quantity @run.Prepared.Goal.InstrumentUniverse.Single() at @run.Prepared.LimitPrice.ToString("N2")</dd></div>
+            </dl>
+            <details open>
+                <summary>Complete immutable authority summary</summary>
+                <pre>@run.Prepared.AuthoritySummary</pre>
+            </details>
+            <label class="confirmation">
+                <input type="checkbox" @bind="authorityConfirmed" disabled="@isBusy" />
+                <span>I authorize this exact PAPER Goal, account binding, allocation, schedule, and policy set.</span>
+            </label>
+            <div class="actions split">
+                <button class="secondary" @onclick="Reset" disabled="@isBusy">Start over</button>
+                <button class="primary" @onclick="ActivateAsync" disabled="@(!authorityConfirmed || isBusy)">
+                    @(isBusy ? "Authorizing..." : "Authorize paper Goal")
+                </button>
+            </div>
+        </section>
+    }
+    else if (run.Activation.State == GoalActivationState.PAUSED)
+    {
+        <section class="panel" aria-labelledby="paused-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Paused</p><h2 id="paused-heading">Goal authority blocks new work</h2></div>
+                <span class="blocked-tag">NO NEW EXPOSURE</span>
+            </div>
+            <p class="body-copy">
+                Existing simulated Broker Orders remain active. Resume this exact authority,
+                revoke it, or use the kill switch for open Orders.
+            </p>
+            <div class="actions split">
+                <button class="danger-button" @onclick="RevokeActivationAsync" disabled="@isBusy">
+                    Permanently revoke authority
+                </button>
+                <button class="primary" @onclick="ResumeActivationAsync" disabled="@isBusy">
+                    Resume exact authority
+                </button>
+            </div>
+        </section>
+    }
+    else if (run.Activation.State is GoalActivationState.REVOKED or GoalActivationState.EXPIRED)
+    {
+        <section class="panel" aria-labelledby="revoked-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Stopped</p><h2 id="revoked-heading">Goal authority is terminal</h2></div>
+                <span class="blocked-tag">NO NEW EXPOSURE</span>
+            </div>
+            <p class="body-copy">
+                Revocation does not cancel an existing Broker Order. Use the kill switch or
+                Broker cancellation before revocation when an Order remains open.
+            </p>
+            <div class="actions">
+                <button class="primary" @onclick="Reset" disabled="@isBusy">Prepare another Goal</button>
+            </div>
+        </section>
+    }
+    else if (run.Session is null)
+    {
+        <ActionPanel Step="Step 3" Heading="Run exact preflight and start the Session">
+            <p class="body-copy">Preflight checks the account, endpoint, policies, schedule, allocation, Broker capabilities, reconciliation, and kill switches.</p>
+            <div class="actions split">
+                <button class="danger-button" @onclick="TriggerKillSwitchAsync" disabled="@isBusy">Trigger kill switch</button>
+                <button class="primary" @onclick="StartSessionAsync" disabled="@isBusy">Start PAPER Session</button>
+            </div>
+        </ActionPanel>
+    }
+    else if (run.Decision?.State == DecisionState.GUARD_REJECTED)
+    {
+        <section class="panel" aria-labelledby="guard-blocked-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Blocked</p><h2 id="guard-blocked-heading">Strategy proposal failed deterministic guards</h2></div>
+                <span class="blocked-tag">NO INTENT</span>
+            </div>
+            <CheckList Checks="run.Decision.GuardResults.Select(item => (item.Code, item.Passed, item.Detail))" />
+            <div class="actions"><button class="primary" @onclick="Reset">Prepare another Goal</button></div>
+        </section>
+    }
+    else if (run.Session.State == SessionState.RUNNING && run.Intent is null)
+    {
+        <ActionPanel Step="Step 4" Heading="Create the deterministic Execution intent">
+            <p class="body-copy">The simulated Strategy proposal cannot submit directly. Application guards and the exact Risk policy run first.</p>
+            <div class="actions split">
+                <button class="danger-button" @onclick="TriggerKillSwitchAsync" disabled="@isBusy">Trigger kill switch</button>
+                <button class="primary" @onclick="CreateIntentAsync" disabled="@isBusy">Evaluate and create intent</button>
+            </div>
+        </ActionPanel>
+    }
+    else if (run.Intent?.State == ExecutionIntentState.REVIEW_PENDING)
+    {
+        <section class="panel" aria-labelledby="review-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Step 5</p><h2 id="review-heading">Review the immutable Execution intent</h2></div>
+                <span class="review-tag">REVIEW REQUIRED</span>
+            </div>
+            <dl class="summary-grid">
+                <div><dt>Environment</dt><dd>PAPER / SIMULATED</dd></div>
+                <div><dt>Account</dt><dd>@Mask(run.Intent.AccountBinding.AccountIdentifier)</dd></div>
+                <div><dt>Goal version</dt><dd>@run.Intent.GoalVersionId.Value</dd></div>
+                <div><dt>Intent</dt><dd>@run.Intent.Id.Value</dd></div>
+                <div><dt>Digest</dt><dd>@run.Intent.ContentDigest</dd></div>
+                <div><dt>Instrument and side</dt><dd>@run.Intent.InstrumentIdentifier / @run.Intent.Side</dd></div>
+                <div><dt>Quantity</dt><dd>@run.Intent.Quantity</dd></div>
+                <div><dt>Order type</dt><dd>@run.Intent.OrderType / @run.Intent.TimeInForce</dd></div>
+                <div><dt>Price constraint</dt><dd>Limit @run.Intent.LimitPrice.ToString("N2") USD</dd></div>
+                <div><dt>Maximum exposure</dt><dd>@run.Intent.MaximumExposure.ToString("N2") USD</dd></div>
+                <div><dt>Intent expiry</dt><dd>@run.Intent.ExpiresAt.ToString("O")</dd></div>
+            </dl>
+            @if (run.PreviousIntent is not null)
+            {
+                <div class="message" role="status">
+                    This intent replaces @run.PreviousIntent.Id.Value.
+                    The previous immutable terms were @run.PreviousIntent.Quantity shares
+                    at @run.PreviousIntent.LimitPrice.ToString("N2") USD.
+                </div>
+            }
+            <p class="body-copy"><strong>Decision explanation:</strong> @run.Decision?.Explanation</p>
+            <RiskChecks Evaluation="run.RiskEvaluation" />
+            <fieldset class="full-width">
+                <legend>Create a replacement intent</legend>
+                <div class="form-grid compact-grid">
+                    <label>
+                        <span>Replacement quantity</span>
+                        <InputNumber @bind-Value="replacementQuantity" disabled="@isBusy" step="1" />
+                    </label>
+                    <label>
+                        <span>Replacement limit price</span>
+                        <InputNumber @bind-Value="replacementLimitPrice" disabled="@isBusy" step="0.01" />
+                    </label>
+                </div>
+                <button class="secondary" @onclick="ReplaceIntentAsync" disabled="@isBusy">
+                    Evaluate replacement intent
+                </button>
+            </fieldset>
+            <label class="full-width">
+                <span>Operator note</span>
+                <textarea @bind="reviewNote" disabled="@isBusy" rows="2"></textarea>
+            </label>
+            <div class="actions split">
+                <button class="danger-button" @onclick="RejectAsync" disabled="@isBusy">Reject exact intent</button>
+                <button class="primary" @onclick="ApproveAsync" disabled="@isBusy">Approve and submit to simulation</button>
+            </div>
+        </section>
+    }
+    else if (run.Intent?.State == ExecutionIntentState.RISK_REJECTED
+        || run.Intent?.State == ExecutionIntentState.REJECTED
+        || run.PreSubmitEvaluation?.Result == PreSubmitEvaluationResult.FAILED)
+    {
+        <section class="panel" aria-labelledby="blocked-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Blocked</p><h2 id="blocked-heading">Execution stopped safely</h2></div>
+                <span class="blocked-tag">NO ORDER</span>
+            </div>
+            <RiskChecks Evaluation="run.RiskEvaluation" />
+            @if (run.PreSubmitEvaluation is not null)
+            {
+                <CheckList Checks="run.PreSubmitEvaluation.Checks.Select(item => (item.Code.ToString(), item.Passed, item.Reason))" />
+            }
+            <div class="actions"><button class="primary" @onclick="Reset">Prepare another Goal</button></div>
+        </section>
+    }
+    else if (run.Order is not null && run.Order.State is OrderState.ACKNOWLEDGED or OrderState.PARTIALLY_FILLED)
+    {
+        <section class="panel" aria-labelledby="order-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Step 6</p><h2 id="order-heading">Operate the simulated Broker Order</h2></div>
+                <span class="authorized-tag">@run.Order.State</span>
+            </div>
+            <dl class="summary-grid">
+                <div><dt>Client Order</dt><dd>@run.Order.BrokerClientOrderId</dd></div>
+                <div><dt>Broker Order</dt><dd>@run.Order.BrokerOrderId</dd></div>
+                <div><dt>Filled quantity</dt><dd>@run.Order.FilledQuantity</dd></div>
+                <div><dt>Environment</dt><dd>PAPER / SIMULATED</dd></div>
+            </dl>
+            <label class="seed-field">
+                <span>Simulated Fill price</span>
+                <input type="number" min="0.01" step="0.01" @bind="fillPrice" disabled="@isBusy" />
+            </label>
+            <div class="actions action-cluster">
+                <button class="danger-button" @onclick="TriggerKillSwitchAsync" disabled="@isBusy">Trigger kill switch</button>
+                <button class="secondary" @onclick="CancelOrderAsync" disabled="@isBusy">Cancel Order</button>
+                <button class="primary" @onclick="SimulateFillAsync" disabled="@isBusy">Simulate complete Fill</button>
+            </div>
+        </section>
+    }
+    else if (run.Session.State == SessionState.RUNNING)
+    {
+        <section class="panel result-panel" aria-labelledby="finish-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Step 7</p><h2 id="finish-heading">Reconcile and complete the Session</h2></div>
+                <span class="complete-tag">@(run.Order?.State.ToString() ?? run.Intent?.State.ToString())</span>
+            </div>
+            @if (run.Fill is not null)
+            {
+                <dl class="summary-grid">
+                    <div><dt>Fill</dt><dd>@run.Fill.Id.Value</dd></div>
+                    <div><dt>Quantity and price</dt><dd>@run.Fill.Quantity at @run.Fill.Price.ToString("N2")</dd></div>
+                    <div><dt>Post-Fill result</dt><dd>@run.PostFillEvaluation?.Result</dd></div>
+                    <div><dt>Reservation</dt><dd>Released by terminal Broker truth</dd></div>
+                </dl>
+            }
+            <div class="actions split">
+                <button class="danger-button" @onclick="TriggerKillSwitchAsync" disabled="@isBusy">Trigger kill switch</button>
+                <button class="primary" @onclick="CompleteSessionAsync" disabled="@isBusy">Run final reconciliation</button>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="panel result-panel" aria-labelledby="complete-heading">
+            <div class="panel-heading">
+                <div><p class="section-number">Complete</p><h2 id="complete-heading">Paper Session has durable final evidence</h2></div>
+                <span class="complete-tag">@run.Session.State</span>
+            </div>
+            <dl class="summary-grid">
+                <div><dt>Session</dt><dd>@run.Session.Id.Value</dd></div>
+                <div><dt>Reconciliation</dt><dd>@run.Reconciliation?.Result</dd></div>
+                <div><dt>Corrections</dt><dd>@(run.Reconciliation?.Corrections.Length ?? 0)</dd></div>
+                <div><dt>Differences</dt><dd>@(run.Reconciliation?.Differences.Length ?? 0)</dd></div>
+                <div><dt>Compared Orders</dt><dd>@run.Reconciliation?.ComparedOrderRange</dd></div>
+                <div><dt>Compared Fills</dt><dd>@run.Reconciliation?.ComparedFillRange</dd></div>
+                <div><dt>Compared positions</dt><dd>@run.Reconciliation?.ComparedPositionSnapshot</dd></div>
+                @if (run.Reconciliation?.OperatorAction is not null)
+                {
+                    <div><dt>Required Operator action</dt><dd>@run.Reconciliation.OperatorAction</dd></div>
+                }
+            </dl>
+            <div class="actions action-cluster">
+                @if (status?.KillSwitchState.Contains("TRIGGERED", StringComparison.Ordinal) == true
+                    || status?.KillSwitchState.Contains("RECOVERY_REQUIRED", StringComparison.Ordinal) == true)
+                {
+                    <button class="secondary" @onclick="RecoverKillSwitchesAsync" disabled="@isBusy">Reconcile and clear recovered switches</button>
+                }
+                @if (run.Session.State == SessionState.COMPLETED
+                    && run.Activation?.State == GoalActivationState.ACTIVE)
+                {
+                    <button class="secondary" @onclick="StartNextSessionAsync" disabled="@isBusy">
+                        Start another Session
+                    </button>
+                }
+                <button class="primary" @onclick="Reset">Prepare another Goal</button>
+            </div>
+        </section>
+    }
+</main>
+
+@code {
+    private string selectedMode = "PAPER_REVIEW";
+    private string objective = "Validate a bounded long-only paper order through the complete safe execution lifecycle.";
+    private string instrument = "AAPL";
+    private decimal quantity = 10m;
+    private decimal limitPrice = 100m;
+    private decimal fillPrice = 99m;
+    private decimal capitalAllocation = 10_000m;
+    private decimal replacementQuantity = 10m;
+    private decimal replacementLimitPrice = 100m;
+    private string reviewNote = "Approve the exact simulated paper intent.";
+    private bool authorityConfirmed;
+    private bool isBusy;
+    private string? errorMessage;
+    private string? successMessage;
+    private PaperMvpRun? run;
+    private PaperOperatorSnapshot? status;
+
+    protected override async Task OnInitializedAsync() => await RefreshStatusAsync();
+
+    private async Task PrepareAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.PrepareAsync(ExecutionModeRules.Parse(selectedMode),
+            objective, instrument, quantity, limitPrice, capitalAllocation);
+        successMessage = "The immutable paper Goal and authority summary are ready.";
+    });
+
+    private async Task ActivateAsync()
+    {
+        if (!authorityConfirmed) return;
+        await RunOperationAsync(async () =>
+        {
+            run = await Workflow.ActivateAsync(
+                "The local Operator confirmed the complete simulated PAPER authority summary.");
+            successMessage = "The exact paper authority is active.";
+        });
+    }
+
+    private async Task StartSessionAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.StartSessionAsync();
+        successMessage = "Preflight passed and the paper Session is running.";
+    });
+
+    private async Task PauseActivationAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.PauseActivationAsync();
+        successMessage = "The paper authority is paused. New Sessions and intents are blocked.";
+    });
+
+    private async Task ResumeActivationAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.ResumeActivationAsync();
+        successMessage = "The exact paper authority is active again.";
+    });
+
+    private async Task RevokeActivationAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.RevokeActivationAsync();
+        successMessage = "The paper authority is permanently revoked.";
+    });
+
+    private async Task CreateIntentAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.CreateIntentAsync();
+        if (run.Intent is not null)
+        {
+            replacementQuantity = run.Intent.Quantity;
+            replacementLimitPrice = run.Intent.LimitPrice;
+        }
+        successMessage = run.Intent?.Mode == ExecutionMode.PAPER_AUTO
+            ? "Automatic authority prepared and submitted the simulated Order."
+            : "Risk passed and the immutable intent is ready for review.";
+    });
+
+    private async Task ReplaceIntentAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.ReplaceIntentAsync(
+            replacementQuantity, replacementLimitPrice);
+        successMessage = run.Intent?.State == ExecutionIntentState.REVIEW_PENDING
+            ? "The replacement has a new identity and is ready for review."
+            : "The replacement failed deterministic risk checks. No Order was created.";
+    });
+
+    private async Task ApproveAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.ReviewAsync(ReviewResult.APPROVED, reviewNote);
+        successMessage = "The exact intent was approved and submitted to the simulation.";
+    });
+
+    private async Task RejectAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.ReviewAsync(ReviewResult.REJECTED, reviewNote);
+        successMessage = "The exact intent was rejected. No Order was created.";
+    });
+
+    private async Task SimulateFillAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.SimulateFillAsync(fillPrice);
+        successMessage = "Broker Fill truth, Position truth, and post-Fill safety evidence are durable.";
+    });
+
+    private async Task CancelOrderAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.CancelOrderAsync();
+        successMessage = "Cancellation was reconciled with simulated Broker truth.";
+    });
+
+    private async Task CompleteSessionAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.CompleteSessionAsync();
+        successMessage = "Final Broker reconciliation is current and the Session is complete.";
+    });
+
+    private async Task StartNextSessionAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.StartNextSessionAsync();
+        successMessage = "Fresh preflight passed for another Session under the same authority.";
+    });
+
+    private async Task TriggerKillSwitchAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.TriggerKillSwitchAsync();
+        successMessage = "The durable paper kill switch is triggered.";
+    });
+
+    private async Task RecoverKillSwitchesAsync() => await RunOperationAsync(async () =>
+    {
+        run = await Workflow.RecoverKillSwitchesAsync();
+        successMessage = "Current reconciliation evidence permitted the Operator recovery action.";
+    });
+
+    private async Task RunOperationAsync(Func<Task> operation)
+    {
+        isBusy = true;
+        errorMessage = null;
+        successMessage = null;
+        try
+        {
+            await operation();
+            await RefreshStatusAsync();
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+            await RefreshStatusAsync();
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task RefreshStatusAsync()
+    {
+        try
+        {
+            status = await Workflow.ReadStatusAsync();
+        }
+        catch
+        {
+            status = null;
+        }
+    }
+
+    private void Reset()
+    {
+        Workflow.Reset();
+        run = null;
+        authorityConfirmed = false;
+        errorMessage = null;
+        successMessage = null;
+    }
+
+    private static string Mask(string value) => value.Length <= 4
+        ? new string('*', value.Length)
+        : $"{new string('*', value.Length - 4)}{value[^4..]}";
+}

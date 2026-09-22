@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+option csharp_namespace = "Stockripper.Strategy.Contracts.V1";
+
+package stockripper.strategy.v1;
+
+service StrategyRuntime {
+  rpc Evaluate (StrategyRequest) returns (StrategyResponse);
+}
+
+message StrategyRequest {
+  string contract_version = 1;
+  string strategy_version = 2;
+  string strategy_artifact_digest = 3;
+  string input_snapshot_id = 4;
+  int64 seed = 5;
+  string goal_version_id = 6;
+  string input_snapshot_digest = 7;
+}
+
+message StrategyResponse {
+  StrategyAction action = 1;
+  string reason = 2;
+  string instrument_identifier = 3;
+  string quantity = 4;
+  string limit_price = 5;
+  string contract_version = 6;
+  string strategy_version = 7;
+  string strategy_artifact_digest = 8;
+  map<string, string> output_metrics = 9;
+  string evidence = 10;
+  string confidence = 11;
+}
+
+enum StrategyAction {
+  STRATEGY_ACTION_UNSPECIFIED = 0;
+  STRATEGY_ACTION_NO_ACTION = 1;
+  STRATEGY_ACTION_BUY = 2;
+  STRATEGY_ACTION_SELL = 3;
+}

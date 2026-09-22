@@ -1,0 +1,13 @@
+<section class="panel">
+    <div class="panel-heading">
+        <div><p class="section-number">@Step</p><h2>@Heading</h2></div>
+        <span class="paper-tag">PAPER</span>
+    </div>
+    @ChildContent
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Step { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Heading { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public RenderFragment? ChildContent { get; set; }
+}

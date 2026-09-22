@@ -1,87 +1,64 @@
-# StockRipper
+# Stockripper
 
-> Autonomous multi-agent paper-trading research laboratory.
+Stockripper is a goal-driven market research and trade execution system.
 
-StockRipper runs a council of LLM-driven agents across competing strategy
-tracks (`conservative` → `balanced` → `aggressive` → `concentrated` → `yolo`,
-plus `quant_signal`, `random_baseline`, and `benchmark`), executing
-**fully autonomously** against the Alpaca paper-trading environment. The
-headline output is a head-to-head leaderboard of strategy tracks.
+The repository contains a local simulated-paper MVP. It supports `REPLAY`,
+`RESEARCH`, `PAPER_REVIEW`, and `PAPER_AUTO`.
 
-The authoritative spec lives in [`PROJECT_SPEC.md`](./PROJECT_SPEC.md).
+The paper MVP has no network Broker client. It cannot reach Alpaca or a live
+account. The simulated Broker uses explicit `PAPER` authority only.
 
-## Safety floor
+Read the [functional specification](./docs/functional-specification.md) for
+the approved behavior. Read the [paper MVP guide](./docs/implementation/phase-1-paper-mvp.md)
+for setup, operation, safety limits, and validation evidence.
 
-StockRipper is paper-only by design. The application **refuses to start**
-against any Alpaca endpoint other than `paper-api.alpaca.markets`. This is
-enforced in `src/stockripper/config.py`, covered by tests in
-`tests/test_config.py`, and additionally guarded by a pre-tool hook in
-`.github/hooks/scripts/pre-tool-policy.ps1` that blocks edits referencing the
-live endpoint.
+The [architecture baseline](./docs/architecture/README.md) records accepted
+technology decisions. The [safety review](./docs/architecture/safety-review.md)
+records the execution safety assessment.
+
+The repository includes shared guidance for Codex, GitHub Copilot, and Claude
+Code. Read [AI coding environment](./docs/ai-coding-environment.md) for the
+layout and maintenance rules.
 
 ## Quick start
 
-Prerequisites: [uv](https://docs.astral.sh/uv/) (Python ≥ 3.12) and Docker
-Desktop for the local Postgres.
+Install .NET 10 and Docker Desktop. Start local PostgreSQL and configure local
+secrets:
 
 ```powershell
-# 1. Install dependencies into a project-local venv
-uv sync --dev
-
-# 2. Create your local .env (gitignored)
-Copy-Item .env.example .env
-# then edit .env and fill in:
-#   ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY
-#   OPENAI_API_KEY
-
-# 3. Bring up Postgres
-docker compose up -d postgres
-
-# 4. Verify the paper-endpoint check + config load
-uv run stockripper status
-
-# 5. Run the test suite
-uv run pytest
+./eng/start-local.ps1
 ```
 
-`uv run stockripper status` prints a **redacted** view of your configuration
-and confirms that the paper-endpoint fail-closed check passes. It exits
-non-zero if any required credential is missing or if `ALPACA_BASE_URL` does
-not resolve to `paper-api.alpaca.markets`.
-
-## Repository layout (Phase 0)
-
-```
-PROJECT_SPEC.md           Authoritative spec
-.github/                  Copilot customization + CI workflows + safety hooks
-docker-compose.yml        Local Postgres (Phase 1+)
-pyproject.toml            uv-managed project + tool configuration
-src/stockripper/
-  __init__.py
-  __main__.py             Typer CLI (`stockripper version|status`)
-  config.py               pydantic-settings with paper-endpoint fail-closed
-tests/
-  conftest.py             Env-isolated fixtures
-  test_config.py          Universal floor #1 invariants
-  test_cli.py             CLI smoke tests
-```
-
-Later phases add the Alpaca client, ledger, agent council, LangGraph
-orchestration, per-track risk gates, scoring engine, leaderboard, and
-backtest harness — see roadmap in `PROJECT_SPEC.md` §25.
-
-## Development commands
+Start the Operator host:
 
 ```powershell
-uv sync --dev                       # install / refresh deps
-uv run ruff check .                 # lint
-uv run ruff check --fix .           # lint + autofix
-uv run mypy src/stockripper tests   # type check (strict)
-uv run pytest                       # all tests
-uv run pytest -m "not live"         # exclude live-network tests
-uv lock --check                     # verify lockfile is in sync
+dotnet run --project src/Stockripper.Host --urls http://127.0.0.1:5080
 ```
 
-## License
+Open `http://127.0.0.1:5080`. The host applies migrations and verifies Audit
+integrity before it becomes ready.
 
-MIT — see [`LICENSE`](./LICENSE).
+Stop local PostgreSQL without deleting its volume:
+
+```powershell
+./eng/stop-local.ps1
+```
+
+## Quality checks
+
+Run the repository build:
+
+```powershell
+./build.ps1
+```
+
+Run all automated tests:
+
+```powershell
+./test.ps1
+```
+
+The test command uses isolated PostgreSQL 18 databases in Docker.
+
+Historical implementation records remain in `docs/implementation/`. Their
+boundary statements describe the named slice at its recorded date.
